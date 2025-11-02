@@ -3,7 +3,7 @@ const session = require('express-session');
 const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // נשאר לצורך ניהול קבצי ההגשה ב-uploads
+const fs = require('fs'); 
 
 // --- SQL/Knex Setup ---
 const knex = require('knex');
@@ -18,7 +18,7 @@ const knexConfig = {
     }
     // *********************************************************
 };
-const db = knex(knexConfig); // 'db' הוא עכשיו ה-Query Builder שלנו
+const db = knex(knexConfig); 
 
 const app = express();
 // שימוש ב-PORT של Render
@@ -61,15 +61,13 @@ app.use(session({
 
 // --- פונקציות עזר ל-Postgres ---
 
-// פונקציה לקבלת ה-ID הבא (כמו שהיה ב-getNextId המקורי)
+// פונקציה לקבלת ה-ID הבא 
 async function getSequentialId(tableName, initialId = 1) {
     try {
         const result = await db(tableName).max('id as maxId').first();
         return (result.maxId || initialId) + 1;
     } catch (e) {
         console.error(`שגיאה בשליפת ID עבור ${tableName}:`, e);
-        // במקרה של שגיאה חמורה (כמו טבלה לא קיימת בגלל טרנזקציה כושלת), נחזיר את הערך ההתחלתי.
-        // הקוד אמור להמשיך ל-setupDatabase כדי לתקן את זה.
         return initialId;
     }
 }
@@ -107,11 +105,11 @@ async function setupDatabase() {
     // טבלת כיתות (classes)
     if (!await db.schema.hasTable('classes')) {
         await db.schema.createTable('classes', (table) => {
-            table.integer('id').primary(); // שומרים על ID נומרי כדי להתאים לקוד הקיים
+            table.integer('id').primary(); 
             table.string('name').notNullable();
             table.string('grade');
             table.integer('teacherId').nullable(); 
-            table.specificType('students', 'integer ARRAY').defaultTo('{3}'); // נתוני דוגמה
+            table.specificType('students', 'integer ARRAY').defaultTo('{3}'); 
             table.timestamps(true, true);
         });
         await db('classes').insert({ id: 101, name: "כיתה א'1", grade: "א", teacherId: 2, students: [3] });
@@ -148,7 +146,7 @@ async function setupDatabase() {
             table.integer('teacherId').notNullable();
             table.string('teacherName');
             table.integer('classId').notNullable();
-            table.jsonb('submissions').defaultTo('[]'); // שמירת מערך submissions כ-JSONB
+            table.jsonb('submissions').defaultTo('[]'); 
             table.timestamps(true, true);
         });
         await db('assignments').insert({ id: 1, title: 'משימה בחשבון', description: 'לפתור את 10 התרגילים בעמוד 10.', dueDate: '2025-11-10', teacherId: 2, teacherName: "מרים כהן", classId: 101, submissions: [] });
@@ -161,15 +159,13 @@ async function setupDatabase() {
 
 // --- Middleware - אימות והרשאות ---
 
-// Middleware - אימות והרשאות (עודכן ל-async/await ושימוש ב-db Knex)
 const isAuthenticated = async (req, res, next) => {
     if (req.session.userId) {
-        // שליפת המשתמש המלא מה-DB בכל בקשה
         const user = await db('users').where({ id: req.session.userId }).first();
         
         if (user) {
             const userSession = { ...user };
-            delete userSession.password; // הסרת סיסמה לפני שמירה בסשן
+            delete userSession.password; 
             req.session.user = userSession;
             next();
         } else {
@@ -199,10 +195,9 @@ const isAdminOrTeacher = (req, res, next) => {
 // --- API Endpoints ---
 
 // Authentication
-app.post('/api/login', async (req, res) => { // הוספת async
+app.post('/api/login', async (req, res) => { 
     const { email, password } = req.body;
     
-    // --- שימוש ב-Knex במקום db.users.find ---
     const user = await db('users').where({ email }).first();
     
     if (user && bcrypt.compareSync(password, user.password)) {
@@ -210,7 +205,6 @@ app.post('/api/login', async (req, res) => { // הוספת async
         delete userSession.password;
         
         req.session.user = userSession;
-        // שמירת ה-ID הנומרי בסשן
         req.session.userId = user.id; 
         res.json(userSession);
     } else {
@@ -228,9 +222,8 @@ app.post('/api/logout', (req, res) => {
     });
 });
 
-app.get('/api/me', async (req, res) => { // הוספת async
+app.get('/api/me', async (req, res) => { 
     if (req.session.userId) {
-        // רענון המידע מה-DB
         const freshUser = await db('users').where({ id: req.session.userId }).first();
         
         if (freshUser) {
@@ -248,11 +241,10 @@ app.get('/api/me', async (req, res) => { // הוספת async
     }
 });
 
-app.put('/api/profile', isAuthenticated, async (req, res) => { // הוספת async
+app.put('/api/profile', isAuthenticated, async (req, res) => { 
     const { fullname, email, password } = req.body;
     const userId = req.session.user.id;
     
-    // שליפת המשתמש
     const user = await db('users').where({ id: userId }).first();
 
     if (!user) {
@@ -274,27 +266,24 @@ app.put('/api/profile', isAuthenticated, async (req, res) => { // הוספת asy
     if (email) updateData.email = email;
     if (password) updateData.password = bcrypt.hashSync(password, saltRounds);
 
-    // --- שמירת השינויים ב-Knex ---
     await db('users').where({ id: userId }).update(updateData);
     
-    // שליפת המשתמש המעודכן
     const updatedUser = await db('users').where({ id: userId }).first();
     
     const userSession = { ...updatedUser };
     delete userSession.password;
-    req.session.user = userSession; // עדכון הסשן
+    req.session.user = userSession; 
     
     res.json(userSession);
 });
 
 // Users Management (Admin)
-app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => { // הוספת async
-    // --- שימוש ב-Knex לשליפת כל המשתמשים ---
+app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
     const safeUsers = await db('users').select('id', 'fullname', 'email', 'role', 'classIds');
     res.json(safeUsers);
 });
 
-app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { // הוספת async
+app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
     let { fullname, email, password, role, classIds } = req.body;
     
     if (!fullname || !email || !password || !role) {
@@ -311,7 +300,6 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { // הוס
     const hashedPassword = bcrypt.hashSync(password, saltRounds);
 
     try {
-        // --- הכנסה ל-DB וקבלת ה-ID ---
         const [newUserId] = await db('users').insert({
             fullname,
             email,
@@ -322,11 +310,10 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { // הוס
         
         const newUser = await db('users').where({ id: newUserId }).first();
         
-        // הוספת תלמיד לכיתות (Postgres תומך בעדכון ARRAY)
+        // הוספת תלמיד לכיתות 
         if (role === 'student' && studentClassIds.length > 0) {
             await db('classes')
                 .whereIn('id', studentClassIds)
-                // הוספת ה-ID של התלמיד החדש למערך הסטודנטים
                 .update({ students: db.raw('array_append(students, ?)', [newUserId]) });
         }
         
@@ -339,7 +326,7 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { // הוס
 });
 
 // עריכת משתמש
-app.put('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { // הוספת async
+app.put('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { 
     const userId = parseInt(req.params.id);
     let { fullname, email, role, classIds, password } = req.body;
 
@@ -392,7 +379,7 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { // ה�
 });
 
 
-app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { // הוספת async
+app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { 
     const userId = parseInt(req.params.id);
     
     const user = await db('users').where({ id: userId }).first();
@@ -419,30 +406,29 @@ app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { // 
 });
 
 // Classes Management
-app.get('/api/classes', isAuthenticated, async (req, res) => { // הוספת async
-    // --- שליפה מ-Knex ---
+app.get('/api/classes', isAuthenticated, async (req, res) => { 
     const classes = await db('classes').select('*');
     res.json(classes);
 });
 
-app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { name, grade, teacherId } = req.body;
     
-    const nextId = await getSequentialId('classes', 101); // יצירת ID רציף חדש
+    const nextId = await getSequentialId('classes', 101); 
 
     const [newClass] = await db('classes').insert({
         id: nextId,
         name,
         grade,
         teacherId: parseInt(teacherId) || null,
-        students: [] // יצירת מערך ריק ב-Postgres
+        students: [] 
     }).returning('*');
 
     res.status(201).json(newClass);
 });
 
 // מחיקת כיתה
-app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const classId = parseInt(req.params.id);
     const user = req.session.user;
 
@@ -458,7 +444,7 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, re
 
     // הסרת השיוך מהתלמידים (עדכון טבלת users)
     await db('users')
-        .whereRaw('? = ANY("classIds")', [classId]) // מצא משתמשים שה-classId שלהם מופיע במערך
+        .whereRaw('? = ANY("classIds")', [classId]) 
         .update({ classIds: db.raw('array_remove("classIds", ?)', [classId]) });
 
     // מחיקת הכיתה, כל הפוסטים והמטלות המשויכות
@@ -470,7 +456,7 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, re
 });
 
 // הוספת תלמידים לכיתה
-app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const classId = parseInt(req.params.id);
     const { studentId } = req.body; 
     
@@ -511,7 +497,7 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (
 
 
 // Posts Management
-app.get('/api/posts', isAuthenticated, async (req, res) => { // הוספת async
+app.get('/api/posts', isAuthenticated, async (req, res) => { 
     const user = req.session.user; 
     
     let query = db('posts').select('*').orderBy('date', 'desc');
@@ -530,11 +516,11 @@ app.get('/api/posts', isAuthenticated, async (req, res) => { // הוספת async
     res.json(filteredPosts);
 });
 
-app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { title, content, isPrivate, classId } = req.body;
     const author = req.session.user;
     
-    const nextId = await getSequentialId('posts'); // יצירת ID רציף חדש
+    const nextId = await getSequentialId('posts'); 
 
     const [newPost] = await db('posts').insert({
         id: nextId,
@@ -549,7 +535,7 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     res.status(201).json(newPost);
 });
 
-app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const postId = parseInt(req.params.id);
     const user = req.session.user;
     
@@ -567,7 +553,7 @@ app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res)
 });
 
 // Assignments Management
-app.get('/api/assignments', isAuthenticated, async (req, res) => { // הוספת async
+app.get('/api/assignments', isAuthenticated, async (req, res) => { 
     const user = req.session.user;
     
     if (user.role === 'admin') {
@@ -588,7 +574,7 @@ app.get('/api/assignments', isAuthenticated, async (req, res) => { // הוספת
     res.json([]);
 });
 
-app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { title, description, dueDate, classId } = req.body;
     const teacher = req.session.user;
     
@@ -596,7 +582,7 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
         return res.status(400).json({ message: 'חובה לבחור כיתת יעד.' });
     }
     
-    const nextId = await getSequentialId('assignments'); // יצירת ID רציף חדש
+    const nextId = await getSequentialId('assignments'); 
 
     const [newAssignment] = await db('assignments').insert({
         id: nextId,
@@ -612,12 +598,12 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
     res.status(201).json(newAssignment);
 });
 
-app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), async (req, res) => { // הוספת async
+app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), async (req, res) => { 
     const assignmentId = parseInt(req.params.id);
     const student = req.session.user;
     
     if (student.role !== 'student') {
-        if (req.file) fs.unlinkSync(req.file.path); // מחיקת הקובץ אם הועלה בטעות
+        if (req.file) fs.unlinkSync(req.file.path); 
         return res.status(403).json({ message: 'רק תלמידים יכולים להגיש משימות.' });
     }
     
@@ -657,7 +643,7 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
     res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
 });
 
-app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { // הוספת async
+app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const assignmentId = parseInt(req.params.id);
     const user = req.session.user;
 
@@ -689,7 +675,7 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req
 
 
 // --- הפעלת השרת ---
-app.listen(PORT, async () => { // הוספת async
+app.listen(PORT, async () => { 
     try {
         // בדיקת חיבור והקמת טבלאות
         await db.raw('SELECT 1'); 
