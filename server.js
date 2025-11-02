@@ -133,18 +133,34 @@ const isAdminOrTeacher = (req, res, next) => {
 
 // --- API Endpoints ---
 
-// Authentication
+// Authentication (עם לוגים לאבחון שגיאת 401)
 app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
+    
+    // --- אבחון: מציג את נתוני הניסיון ---
+    console.log(`Attempting login for: ${email}`); 
+    
     const user = db.users.find(u => u.email === email);
     
-    if (user && bcrypt.compareSync(password, user.password)) {
-        const userSession = { ...user };
-        delete userSession.password;
-        
-        req.session.user = userSession;
-        res.json(userSession);
+    if (user) {
+        // --- אבחון: המשתמש נמצא, בודק סיסמה ---
+        console.log(`User found: ${user.fullname}. Comparing password...`); 
+        if (bcrypt.compareSync(password, user.password)) {
+            const userSession = { ...user };
+            delete userSession.password;
+            
+            req.session.user = userSession;
+            // --- אבחון: התחברות הצליחה ---
+            console.log(`✅ Login successful for ${user.fullname}.`); 
+            res.json(userSession);
+        } else {
+            // --- אבחון: הסיסמה נכשלה ---
+            console.log(`❌ Password comparison failed for ${email}.`); 
+            res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
+        }
     } else {
+        // --- אבחון: המשתמש לא נמצא ---
+        console.log(`❌ User not found for email: ${email}`); 
         res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
     }
 });
@@ -368,7 +384,7 @@ app.get('/api/classes', (req, res) => {
     res.json(db.classes);
 });
 
-// *** תיקון: מורה יוצר כיתה רק לעצמו (מהשיחה הקודמת) ***
+// *** תיקון: מורה יוצר כיתה רק לעצמו ***
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const { name, grade, teacherId } = req.body;
     const user = req.session.user; // המשתמש המחובר
@@ -574,6 +590,7 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, (req, res) => {
     res.status(201).json(newAssignment);
 });
 
+// נקודת קצה להגשת משימה (כולל תיקון לבאג מחיקת קבצים)
 app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), (req, res) => {
     const assignmentId = parseInt(req.params.id);
     const student = req.session.user;
