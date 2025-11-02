@@ -9,23 +9,20 @@ const fs = require('fs');
 const knex = require('knex');
 const knexConfig = {
     client: 'pg', // PostgreSQL driver
-    // משתמשים במשתנה הסביבה שנקבע ב-Render (DATABASE_URL)
     connection: process.env.DATABASE_URL || 'postgres://localhost/school_db',
     useNullAsDefault: true,
-    // ********* התיקון הקריטי לבעיית SSL/TLS required *********
+    // התיקון לבעיית SSL/TLS required
     ssl: {
         rejectUnauthorized: false
     }
-    // *********************************************************
 };
 const db = knex(knexConfig); 
 
 const app = express();
-// שימוש ב-PORT של Render
 const PORT = process.env.PORT || 3000; 
 const saltRounds = 10;
 
-// --- הגדרת Multer להעלאת קבצים (ללא שינוי) ---
+// --- הגדרת Multer להעלאת קבצים ---
 const uploadDir = 'uploads/';
 if (!fs.existsSync(uploadDir)){
     fs.mkdirSync(uploadDir);
@@ -41,7 +38,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// --- Middleware (ללא שינוי) ---
+// --- Middleware ---
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
@@ -53,7 +50,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: 'auto', // מותאם ל-Render (משתמש ב-HTTPS)
+        secure: 'auto', 
         maxAge: 1000 * 60 * 60 * 24 
     }
 }));
@@ -61,19 +58,26 @@ app.use(session({
 
 // --- פונקציות עזר ל-Postgres ---
 
-// פונקציה לקבלת ה-ID הבא 
+// פונקציה לקבלת ה-ID הבא - עם תיקון לטיפול בתוצאות Knex/Postgres
 async function getSequentialId(tableName, initialId = 1) {
     try {
         const result = await db(tableName).max('id as maxId').first();
-        return (result.maxId || initialId) + 1;
+        
+        // ********* התיקון לטיפול ב-Postgres שמחזיר לעיתים אובייקט *********
+        let maxId = result.maxId;
+        // Knex יכול להחזיר את הערך בתוך שדה 'max' בתוך האובייקט
+        if (typeof result.maxId === 'object' && result.maxId !== null && result.maxId.max !== undefined) {
+             maxId = result.maxId.max; 
+        } 
+        
+        return (maxId || initialId) + 1;
     } catch (e) {
         console.error(`שגיאה בשליפת ID עבור ${tableName}:`, e);
-        // במקרה של שגיאה קריטית, נחזיר ID ראשוני כדי לא לקרוס
         return initialId;
     }
 }
 
-// --- הגדרת טבלאות ויצירת נתונים ראשוניים (Migrations בסיסי) ---
+// --- הגדרת טבלאות ויצירת נתונים ראשוניים ---
 async function setupDatabase() {
     console.log("בודק ומקים טבלאות PostgreSQL נדרשות...");
     
@@ -85,7 +89,7 @@ async function setupDatabase() {
             table.string('email').unique().notNullable();
             table.string('password').notNullable();
             table.string('role').defaultTo('student');
-            table.specificType('classIds', 'integer ARRAY').defaultTo('{}'); // מערך מספרים ב-Postgres
+            table.specificType('classIds', 'integer ARRAY').defaultTo('{}'); 
             table.timestamps(true, true);
         });
         console.log("🛠️ טבלת 'users' נוצרה.");
@@ -301,7 +305,6 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
 // Users Management (Admin)
 app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
     try {
-        // *** בלוק ה-try/catch שהוספנו לבדיקה ***
         const safeUsers = await db('users').select('id', 'fullname', 'email', 'role', 'classIds');
         res.json(safeUsers);
     } catch (error) {
@@ -327,13 +330,20 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
         
         const hashedPassword = bcrypt.hashSync(password, saltRounds);
 
-        const [newUserId] = await db('users').insert({
+        // ********* תיקון קריטי: חילוץ ID נכון מ-Knex/Postgres *********
+        const returnedId = await db('users').insert({
             fullname,
             email,
             password: hashedPassword,
             role,
             classIds: studentClassIds
         }).returning('id');
+        
+        // ודא שה-ID שולף בצורה תקינה, בין אם מדובר במערך של ערכים או אובייקטים
+        const newUserId = (typeof returnedId[0] === 'object' && returnedId[0].id) 
+            ? returnedId[0].id 
+            : returnedId[0];
+        // ***************************************************************
         
         const newUser = await db('users').where({ id: newUserId }).first();
         
@@ -459,13 +469,17 @@ app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => 
     try {
         const nextId = await getSequentialId('classes', 101); 
 
-        const [newClass] = await db('classes').insert({
+        const returnedId = await db('classes').insert({
             id: nextId,
             name,
             grade,
             teacherId: parseInt(teacherId) || null,
             students: [] 
         }).returning('*');
+        
+        const newClass = (typeof returnedId[0] === 'object') 
+            ? returnedId[0] 
+            : returnedId; // כאן נחזיר את האובייקט המלא
 
         res.status(201).json(newClass);
     } catch (error) {
@@ -585,7 +599,7 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     try {
         const nextId = await getSequentialId('posts'); 
 
-        const [newPost] = await db('posts').insert({
+        const returnedId = await db('posts').insert({
             id: nextId,
             title,
             content,
@@ -594,6 +608,10 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => {
             isPrivate: !!isPrivate,
             classId: isPrivate ? (parseInt(classId) || null) : null
         }).returning('*');
+
+        const newPost = (typeof returnedId[0] === 'object') 
+            ? returnedId[0] 
+            : returnedId; 
 
         res.status(201).json(newPost);
     } catch (error) {
@@ -662,7 +680,7 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
     try {
         const nextId = await getSequentialId('assignments'); 
 
-        const [newAssignment] = await db('assignments').insert({
+        const returnedId = await db('assignments').insert({
             id: nextId,
             title,
             description,
@@ -672,6 +690,10 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
             classId: parseInt(classId),
             submissions: []
         }).returning('*');
+
+        const newAssignment = (typeof returnedId[0] === 'object') 
+            ? returnedId[0] 
+            : returnedId; 
         
         res.status(201).json(newAssignment);
     } catch (error) {
@@ -709,6 +731,11 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
             date: new Date()
         };
         
+        // יש לוודא ש-submissions הוא מערך לפני השימוש ב-findIndex.
+        if (!Array.isArray(submissions)) {
+             submissions = [];
+        }
+        
         const existingSubmissionIndex = submissions.findIndex(s => s.studentId === student.id);
         if (existingSubmissionIndex > -1) {
             const oldFile = submissions[existingSubmissionIndex].file.path;
@@ -744,14 +771,19 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req
 
         if (user.role === 'admin' || assignment.teacherId === user.id) {
             try {
-                // מחיקת קבצים
-                (assignment.submissions || []).forEach(sub => {
+                let submissions = assignment.submissions || [];
+                 // ********* תיקון קריטי: ודא ש-submissions הוא מערך *********
+                if (!Array.isArray(submissions)) {
+                     submissions = [];
+                }
+                submissions.forEach(sub => {
                     if (sub.file && fs.existsSync(sub.file.path)) {
                         fs.unlinkSync(sub.file.path);
                     }
                 });
             } catch (err) {
-                console.error("שגיאה במחיקת קבצי הגשה:", err);
+                // שגיאה זו נלכדה ביומן השרת שלך: 'TypeError: (assignment.submissions || []).forEach is not a function'
+                console.error("❌ שגיאה במחיקת קבצי הגשה:", err);
             }
             
             // מחיקת המטלה
@@ -779,7 +811,6 @@ app.listen(PORT, async () => {
         console.log(`🔑 עמוד התחברות: http://localhost:${PORT}/login.html`);
         console.log(`🏠 עמוד ראשי: http://localhost:${PORT}/index.html`);
     } catch (error) {
-        // Log זה קריטי! הוא יציג את ה-SSL/TLS required ביומן השרת.
         console.error("❌ שגיאה בחיבור ל-DB או בהפעלת השרת:", error); 
         process.exit(1);
     }
