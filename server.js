@@ -464,17 +464,33 @@ app.get('/api/classes', isAuthenticated, async (req, res) => {
     }
 });
 
+// *** תיקון עיקרי: מורה יוצר כיתה רק לעצמו ***
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { name, grade, teacherId } = req.body;
+    const user = req.session.user; // המשתמש המחובר
     
     try {
         const nextId = await getSequentialId('classes', 101); 
+        
+        let assignedTeacherId;
+        
+        if (user.role === 'admin') {
+            // מנהל: יכול להגדיר מורה אחר (או null)
+            assignedTeacherId = parseInt(teacherId) || null;
+        } else if (user.role === 'teacher') {
+            // מורה: חייב להיות מוגדר לעצמו. מתעלם מ-teacherId שהגיע ב-body.
+            assignedTeacherId = user.id;
+        } else {
+             // הרשאה נכשלה (למרות ה-middleware)
+             return res.status(403).json({ message: 'אין לך הרשאה ליצור כיתה.' });
+        }
+        
 
         const returnedId = await db('classes').insert({
             id: nextId,
             name,
             grade,
-            teacherId: parseInt(teacherId) || null,
+            teacherId: assignedTeacherId, // משתמש במזהה המורה שנקבע
             students: [] 
         }).returning('*');
         
@@ -815,4 +831,3 @@ app.listen(PORT, async () => {
         process.exit(1);
     }
 });
-
