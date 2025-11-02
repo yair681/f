@@ -12,6 +12,11 @@ const knexConfig = {
     // משתמשים במשתנה הסביבה שנקבע ב-Render (DATABASE_URL)
     connection: process.env.DATABASE_URL || 'postgres://localhost/school_db',
     useNullAsDefault: true,
+    // ********* התיקון הקריטי לבעיית SSL/TLS required *********
+    ssl: {
+        rejectUnauthorized: false
+    }
+    // *********************************************************
 };
 const db = knex(knexConfig); // 'db' הוא עכשיו ה-Query Builder שלנו
 
@@ -63,6 +68,8 @@ async function getSequentialId(tableName, initialId = 1) {
         return (result.maxId || initialId) + 1;
     } catch (e) {
         console.error(`שגיאה בשליפת ID עבור ${tableName}:`, e);
+        // במקרה של שגיאה חמורה (כמו טבלה לא קיימת בגלל טרנזקציה כושלת), נחזיר את הערך ההתחלתי.
+        // הקוד אמור להמשיך ל-setupDatabase כדי לתקן את זה.
         return initialId;
     }
 }
