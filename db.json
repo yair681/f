@@ -8,7 +8,43 @@
       "role": "admin",
       "classIds": []
     },
-    // ... שאר המשתמשים
+    {
+      "id": 2,
+      "fullname": "מרים כהן",
+      "email": "teacher@school.com",
+      "password": "$2a$10$A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A7B8",
+      "role": "teacher",
+      "classIds": [101]
+    },
+    {
+      "id": 3,
+      "fullname": "דנה לוי",
+      "email": "student@school.com",
+      "password": "$2a$10$B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A7B8C9",
+      "role": "student",
+      "classIds": [101]
+    }
   ],
-  // ... שאר הנתונים
+  "classes": [
+    {
+      "id": 101,
+      "name": "כיתה א'1",
+      "grade": "א",
+      "teacherId": 2,
+      "students": [3]
+    }
+  ],
+  "posts": [
+    {
+      "id": 1,
+      "title": "ברוכים הבאים לאתר בית הספר",
+      "content": "שנת לימודים מוצלחת ומהנה לכולם! אנחנו שמחים לראותכם כאן.",
+      "authorId": 1,
+      "authorName": "יאיר פריש",
+      "date": "2024-01-15T08:00:00.000Z",
+      "isPrivate": false,
+      "classId": null
+    }
+  ],
+  "assignments": []
 }
