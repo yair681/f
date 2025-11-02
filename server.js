@@ -464,7 +464,7 @@ app.get('/api/classes', isAuthenticated, async (req, res) => {
     }
 });
 
-// *** תיקון עיקרי: מורה יוצר כיתה רק לעצמו ***
+// *** תיקון: מורה יוצר כיתה רק לעצמו ***
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { name, grade, teacherId } = req.body;
     const user = req.session.user; // המשתמש המחובר
@@ -754,11 +754,21 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
         }
         
         const existingSubmissionIndex = submissions.findIndex(s => s.studentId === student.id);
+        
         if (existingSubmissionIndex > -1) {
-            const oldFile = submissions[existingSubmissionIndex].file.path;
-            if (fs.existsSync(oldFile)) {
-                fs.unlinkSync(oldFile);
+            const oldSubmission = submissions[existingSubmissionIndex];
+            
+            // *** התיקון הקריטי לשגיאת 500: בדיקה בטיחותית לפני מחיקת קובץ ישן ***
+            if (oldSubmission && oldSubmission.file && oldSubmission.file.path) {
+                const oldFilePath = oldSubmission.file.path;
+                if (fs.existsSync(oldFilePath)) {
+                    // מחיקת הקובץ הפיזי הישן
+                    fs.unlinkSync(oldFilePath);
+                }
             }
+            // ***************************************************************
+            
+            // עדכון האובייקט החדש במקום הישן
             submissions[existingSubmissionIndex] = newSubmission;
         } else {
             submissions.push(newSubmission);
