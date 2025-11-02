@@ -368,7 +368,8 @@ app.get('/api/classes', (req, res) => {
     res.json(db.classes);
 });
 
-app.post('/api/classes', isAuthenticated, isAdmin, (req, res) => {
+// *** שינוי כאן: isAdmin -> isAdminOrTeacher ***
+app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const { name, grade, teacherId } = req.body;
     
     const newClass = {
@@ -413,22 +414,33 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 });
 
 
-// (מודל ישן - לא בשימוש ב-UI החדש, אבל נשאר ליתר ביטחון)
-app.post('/api/classes/:id/students', isAuthenticated, isAdmin, (req, res) => {
+// *** שינוי כאן: API להוספת תלמידים לכיתה, למנהלים או למורה של הכיתה ***
+app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
-    const { studentId } = req.body;
+    const { studentId } = req.body; // נצפה לקבל studentId
     
     const aClass = db.classes.find(c => c.id === classId);
-    const student = db.users.find(u => u.id === studentId && u.role === 'student');
     
-    if (!aClass || !student) {
-        return res.status(404).json({ message: 'כיתה או תלמיד לא נמצאו.' });
+    if (!aClass) {
+        return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+    }
+
+    // (חדש) בדיקת הרשאות: או מנהל, או המורה המשויך לכיתה
+    if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
+        return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
+    }
+
+    const student = db.users.find(u => u.id === parseInt(studentId) && u.role === 'student');
+    
+    if (!student) {
+        return res.status(404).json({ message: 'תלמיד לא נמצא או שאינו תלמיד.' });
     }
     
     // הוספה לכיתה חדשה
-    if (!aClass.students.includes(studentId)) {
-        aClass.students.push(studentId);
+    if (!aClass.students.includes(student.id)) {
+        aClass.students.push(student.id);
     }
+    // הוספה לרשימת הכיתות של התלמיד
     if (!student.classIds.includes(classId)) {
         student.classIds.push(classId);
     }
@@ -436,6 +448,7 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdmin, (req, res) => {
     saveDb();
     res.json(aClass);
 });
+
 
 // Posts Management
 app.get('/api/posts', (req, res) => {
@@ -470,8 +483,8 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, (req, res) => {
         authorName: author.fullname,
         date: new Date(),
         isPrivate: !!isPrivate,
-        // אם פרטי, השתמש בכיתה שנבחרה, או בכיתה (הראשונה) של המורה אם לא נבחרה
-        classId: isPrivate ? (parseInt(classId) || (author.classIds && author.classIds[0])) : null
+        // *** שינוי כאן: אם פרטי, השתמש בכיתה שנבחרה. ה-fallback הוסר ***
+        classId: isPrivate ? (parseInt(classId) || null) : null
     };
     
     db.posts.push(newPost);
