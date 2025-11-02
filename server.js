@@ -1,164 +1,158 @@
 const express = require('express');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-
-// <--- הוספות ושינויים ל-GitHub ו-Cloudinary --->
-const multer = require('multer'); 
-const { Octokit } = require("@octokit/rest");
-const cloudinary = require('cloudinary').v2;
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
-// <--- סוף הוספות --->
+const { Octokit } = require('@octokit/rest');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const saltRounds = 10;
-// DB_PATH נשאר אבל לא בשימוש לשמירה/טעינה
-const DB_PATH = path.join(__dirname, 'db.json');
 
-// --- הגדרת GitHub API ---
-const githubToken = process.env.GITHUB_TOKEN;
-const dbRepoPath = process.env.DB_REPO_PATH;
+// --- GitHub Database Class ---
+class GitHubDB {
+    constructor() {
+        this.octokit = new Octokit({ 
+            auth: process.env.GITHUB_TOKEN 
+        });
+        this.owner = 'yairfrish'; // ✅ שם המשתמש שלך
+        this.repo = 'school-management-system-detailed'; // ✅ שם הריפו שלך
+        this.path = 'db.json';
+        this.data = {
+            users: [],
+            classes: [],
+            posts: [],
+            assignments: []
+        };
+    }
 
-if (!githubToken || !dbRepoPath) {
-    console.error("שגיאה קריטית: GITHUB_TOKEN או DB_REPO_PATH לא מוגדרים במשתני סביבה.");
-    // במצב כזה, נפעיל את השרת אבל השמירה לא תעבוד.
+    async load() {
+        try {
+            console.log('📥 Loading database from GitHub...');
+            const { data } = await this.octokit.repos.getContent({
+                owner: this.owner,
+                repo: this.repo,
+                path: this.path
+            });
+            
+            const content = Buffer.from(data.content, 'base64').toString();
+            this.data = JSON.parse(content);
+            console.log('✅ Database loaded from GitHub');
+            return this.data;
+        } catch (error) {
+            if (error.status === 404) {
+                console.log('📝 No database file found, creating initial data...');
+                await this.createInitialData();
+            } else {
+                console.error('❌ Error loading from GitHub:', error);
+            }
+            return this.data;
+        }
+    }
+
+    async createInitialData() {
+        const adminPass = bcrypt.hashSync('yair12345', saltRounds);
+        const teacherPass = bcrypt.hashSync('teacher123', saltRounds);
+        const studentPass = bcrypt.hashSync('student123', saltRounds);
+        
+        this.data = {
+            users: [
+                { id: 1, fullname: "יאיר פריש", email: "yairfrish2@gmail.com", password: adminPass, role: "admin", classIds: [] },
+                { id: 2, fullname: "מרים כהן", email: "teacher@school.com", password: teacherPass, role: "teacher", classIds: [101] },
+                { id: 3, fullname: "דנה לוי", email: "student@school.com", password: studentPass, role: "student", classIds: [101] }
+            ],
+            classes: [
+                { id: 101, name: "כיתה א'1", grade: "א", teacherId: 2, students: [3] }
+            ],
+            posts: [
+                { id: 1, title: 'ברוכים הבאים לאתר', content: 'שנת לימודים מוצלחת ומהנה לכולם!', authorId: 1, authorName: "יאיר פריש", date: new Date(), isPrivate: false, classId: null },
+                { id: 2, title: 'שיעורי בית בחשבון', content: 'נא להכין עמוד 10 בספר.', authorId: 2, authorName: "מרים כהן", date: new Date(), isPrivate: true, classId: 101 }
+            ],
+            assignments: [
+                { id: 1, title: 'משימה בחשבון', description: 'לפתור את 10 התרגילים בעמוד 10.', dueDate: '2025-11-10', teacherId: 2, teacherName: "מרים כהן", classId: 101, submissions: [] }
+            ]
+        };
+
+        await this.save();
+    }
+
+    async save() {
+        try {
+            console.log('💾 Saving database to GitHub...');
+            const content = Buffer.from(JSON.stringify(this.data, null, 2)).toString('base64');
+            
+            let sha;
+            try {
+                const { data } = await this.octokit.repos.getContent({
+                    owner: this.owner,
+                    repo: this.repo,
+                    path: this.path
+                });
+                sha = data.sha;
+            } catch (error) {
+                // File doesn't exist yet
+                sha = null;
+            }
+
+            await this.octokit.repos.createOrUpdateFileContents({
+                owner: this.owner,
+                repo: this.repo,
+                path: this.path,
+                message: `Database update - ${new Date().toISOString()}`,
+                content: content,
+                sha: sha
+            });
+            
+            console.log('✅ Database saved to GitHub successfully');
+        } catch (error) {
+            console.error('❌ Error saving to GitHub:', error);
+            throw error;
+        }
+    }
+
+    getNextId(collection) {
+        if (this.data[collection].length === 0) return 1;
+        return Math.max(...this.data[collection].map(item => item.id)) + 1;
+    }
 }
 
-const [owner, repo] = dbRepoPath ? dbRepoPath.split('/') : ['', ''];
-const DB_FILE_PATH = 'db.json'; 
+// --- Initialize GitHub DB ---
+const githubDB = new GitHubDB();
+let db = githubDB.data;
 
-const octokit = new Octokit({
-    auth: githubToken
-});
-let currentDbSha = ''; // SHA של הקובץ האחרון ב-GitHub
+// --- Middleware ---
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static('public'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// --- הגדרת Cloudinary (מחליף את תיקיית uploads) ---
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
-
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-        folder: 'School-Submissions', // תיקייה ב-Cloudinary
-        resource_type: 'auto', // לטיפול אוטומטי בסוגי קבצים שונים
-        public_id: (req, file) => Date.now() + '-' + file.originalname,
+// Multer setup
+const uploadDir = 'uploads/';
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadDir);
     },
+    filename: function (req, file, cb) {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
 });
 const upload = multer({ storage: storage });
 
-// --- Middleware ---
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true })); 
-app.use(express.static('public')); 
-
-// הגדרות express-session
 app.use(session({
     secret: 'a-very-strong-secret-key-for-school',
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: 'auto', 
-        maxAge: 1000 * 60 * 60 * 24 
+        secure: false,
+        maxAge: 1000 * 60 * 60 * 24
     }
 }));
 
-// --- בסיס נתונים (JSON File) ---
-
-let db = {
-    users: [],
-    classes: [],
-    posts: [],
-    assignments: []
-};
-
-// פונקציה לקבלת ה-ID הבא
-const getNextId = (collection) => {
-    if (collection.length === 0) return 1;
-    return Math.max(...collection.map(item => item.id)) + 1;
-};
-
-// <--- פונקציות קריאה וכתיבה ל-GitHub --->
-
-async function loadDb() {
-    if (!githubToken || !dbRepoPath) {
-        console.error("לא ניתן לטעון נתונים מ-GitHub עקב חוסר בפרטי התחברות.");
-        return; 
-    }
-    
-    try {
-        const res = await octokit.repos.getContent({ owner, repo, path: DB_FILE_PATH });
-
-        const content = Buffer.from(res.data.content, 'base64').toString('utf8');
-        db = JSON.parse(content);
-        currentDbSha = res.data.sha; 
-
-        console.log("מסד נתונים נטען מ-GitHub בהצלחה.");
-        
-    } catch (error) {
-        if (error.status === 404) {
-            console.log("קובץ db.json לא נמצא ב-GitHub. יוצר קובץ חדש.");
-            
-            // נתוני דוגמה
-            const adminPass = bcrypt.hashSync('yair12345', saltRounds);
-            const teacherPass = bcrypt.hashSync('teacher123', saltRounds);
-            const studentPass = bcrypt.hashSync('student123', saltRounds);
-            
-            db.users = [
-                { id: getNextId(db.users), fullname: "יאיר פריש", email: "yairfrish2@gmail.com", password: adminPass, role: "admin", classIds: [] },
-                { id: getNextId(db.users), fullname: "מרים כהן", email: "teacher@school.com", password: teacherPass, role: "teacher", classIds: [101] },
-                { id: getNextId(db.users), fullname: "דנה לוי", email: "student@school.com", password: studentPass, role: "student", classIds: [101] }
-            ];
-            db.classes = [
-                { id: 101, name: "כיתה א'1", grade: "א", teacherId: 2, students: [3] }
-            ];
-            db.posts = [
-                { id: 1, title: 'ברוכים הבאים לאתר', content: 'שנת לימודים מוצלחת ומהנה לכולם!', authorId: 1, authorName: "יאיר פריש", date: new Date(), isPrivate: false, classId: null },
-                { id: 2, title: 'שיעורי בית בחשבון', content: 'נא להכין עמוד 10 בספר.', authorId: 2, authorName: "מרים כהן", date: new Date(), isPrivate: true, classId: 101 }
-            ];
-            db.assignments = [
-                { id: 1, title: 'משימה בחשבון', description: 'לפתור את 10 התרגילים בעמוד 10.', dueDate: '2025-11-10', teacherId: 2, teacherName: "מרים כהן", classId: 101, submissions: [] }
-            ];
-            
-            await saveDb("Initial DB creation");
-            console.log("מסד נתונים חדש נוצר עם נתוני דוגמה ונשמר ל-GitHub.");
-            
-        } else {
-            console.error("שגיאה קריטית בטעינת מסד הנתונים מ-GitHub:", error.status, error.message);
-        }
-    }
-}
-
-async function saveDb(message = 'DB update by API') {
-    if (!githubToken || !dbRepoPath) return; 
-    
-    try {
-        const content = JSON.stringify(db, null, 2);
-        const encodedContent = Buffer.from(content).toString('base64');
-        
-        const commitRes = await octokit.repos.createOrUpdateFileContents({
-            owner,
-            repo,
-            path: DB_FILE_PATH,
-            message: `${message} at ${new Date().toISOString()}`,
-            content: encodedContent,
-            sha: currentDbSha 
-        });
-        
-        currentDbSha = commitRes.data.content.sha;
-        
-    } catch (error) {
-        console.error("שגיאה בשמירת מסד הנתונים ל-GitHub:", error.status, error.message);
-    }
-}
-
-// <--- סוף פונקציות קריאה וכתיבה --->
-
-// --- Middleware - אימות והרשאות (הקוד הקיים שלך) ---
+// --- Middleware - Authentication ---
 const isAuthenticated = (req, res, next) => {
     if (req.session.user) {
         next();
@@ -183,106 +177,240 @@ const isAdminOrTeacher = (req, res, next) => {
     }
 };
 
-// --- API Routes (שימוש ב-await saveDb()) ---
+// --- Load initial data ---
+async function initializeApp() {
+    try {
+        db = await githubDB.load();
+        console.log('🚀 App initialized with GitHub database');
+    } catch (error) {
+        console.error('Failed to initialize app:', error);
+    }
+}
+
+// Helper function to save after modifications
+async function saveDatabase() {
+    try {
+        await githubDB.save();
+    } catch (error) {
+        console.error('Error saving database:', error);
+        throw error;
+    }
+}
+
+// --- API Endpoints ---
 
 // Authentication
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', (req, res) => {
     const { email, password } = req.body;
     const user = db.users.find(u => u.email === email);
-
+    
     if (user && bcrypt.compareSync(password, user.password)) {
-        req.session.user = { id: user.id, email: user.email, role: user.role, fullname: user.fullname };
-        res.json(req.session.user);
+        const userSession = { ...user };
+        delete userSession.password;
+        
+        req.session.user = userSession;
+        res.json(userSession);
     } else {
         res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
     }
 });
 
-app.put('/api/profile', isAuthenticated, async (req, res) => {
-    const { fullname, password } = req.body;
-    const user = db.users.find(u => u.id === req.session.user.id);
+app.post('/api/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) {
+            return res.status(500).json({ message: 'ההתנתקות נכשלה.' });
+        }
+        res.clearCookie('connect.sid');
+        res.json({ message: 'התנתקת בהצלחה.' });
+    });
+});
 
-    if (fullname) {
-        user.fullname = fullname;
-        req.session.user.fullname = fullname;
+app.get('/api/me', (req, res) => {
+    if (req.session.user) {
+        const freshUser = db.users.find(u => u.id === req.session.user.id);
+        if (freshUser) {
+            const userSession = { ...freshUser };
+            delete userSession.password;
+            req.session.user = userSession;
+            res.json(userSession);
+        } else {
+            req.session.destroy(() => {
+                res.json(null);
+            });
+        }
+    } else {
+        res.json(null);
     }
+});
+
+app.put('/api/profile', isAuthenticated, async (req, res) => {
+    const { fullname, email, password } = req.body;
+    const userId = req.session.user.id;
+    
+    const userIndex = db.users.findIndex(u => u.id === userId);
+    if (userIndex === -1) {
+        return res.status(404).json({ message: 'משתמש לא נמצא.' });
+    }
+    
+    if (db.users[userIndex].email === 'yairfrish2@gmail.com' && email !== 'yairfrish2@gmail.com') {
+         return res.status(403).json({ message: 'לא ניתן לשנות את האימייל של משתמש זה.' });
+    }
+
+    if (email !== db.users[userIndex].email && db.users.some(u => u.email === email)) {
+        return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+    }
+    
+    const user = db.users[userIndex];
+    user.fullname = fullname || user.fullname;
+    user.email = email || user.email;
+    
     if (password) {
         user.password = bcrypt.hashSync(password, saltRounds);
     }
     
-    await saveDb(`Updated profile for ${user.email}`); 
-    res.json({ message: 'הפרופיל עודכן בהצלחה.' });
+    try {
+        await saveDatabase();
+        const userSession = { ...user };
+        delete userSession.password;
+        req.session.user = userSession;
+        res.json(userSession);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
-// Users Management (Admin)
+// Users Management
+app.get('/api/users', isAuthenticated, isAdmin, (req, res) => {
+    const safeUsers = db.users.map(u => {
+        const { password, ...safeUser } = u;
+        return safeUser;
+    });
+    res.json(safeUsers);
+});
+
 app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
-    const { email, password, role, fullname, studentClassIds = [] } = req.body;
+    let { fullname, email, password, role, classIds } = req.body;
     
-    if (db.users.find(u => u.email === email)) {
-        return res.status(400).json({ message: 'משתמש עם אימייל זה כבר קיים.' });
+    if (!fullname || !email || !password || !role) {
+        return res.status(400).json({ message: 'חסרים שדות חובה.' });
     }
     
-    const hashedPassword = bcrypt.hashSync(password, saltRounds);
-    const newUserId = getNextId(db.users);
+    if (db.users.find(u => u.email === email)) {
+        return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+    }
     
-    const newUser = { id: newUserId, email, password: hashedPassword, role, fullname, classIds: studentClassIds };
+    const studentClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
+    
+    if (studentClassIds.length > 10) {
+        return res.status(400).json({ message: 'לא ניתן לשייך תלמיד ליותר מ-10 כיתות.' });
+    }
+
+    const hashedPassword = bcrypt.hashSync(password, saltRounds);
+    const newUser = {
+        id: githubDB.getNextId('users'),
+        fullname,
+        email,
+        password: hashedPassword,
+        role,
+        classIds: studentClassIds
+    };
+    
     db.users.push(newUser);
     
-    // הוספת תלמיד לכיתות
     if (role === 'student') {
         studentClassIds.forEach(classId => {
             const aClass = db.classes.find(c => c.id === classId);
-            if (aClass && !aClass.students.includes(newUserId)) {
-                aClass.students.push(newUserId);
+            if (aClass && !aClass.students.includes(newUser.id)) {
+                aClass.students.push(newUser.id);
             }
         });
     }
     
-    await saveDb(`New user created: ${email}`); 
-    res.status(201).json(newUser);
+    try {
+        await saveDatabase();
+        const { password: pw, ...safeUser } = newUser;
+        res.status(201).json(safeUser);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 app.put('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => {
     const userId = parseInt(req.params.id);
-    const { fullname, password, role, studentClassIds = [] } = req.body;
-    const user = db.users.find(u => u.id === userId);
-    
-    if (!user) return res.status(404).json({ message: 'משתמש לא נמצא.' });
+    let { fullname, email, role, classIds, password } = req.body;
 
-    if (fullname) user.fullname = fullname;
-    if (password) user.password = bcrypt.hashSync(password, saltRounds);
-    
-    // ניהול כיתות תלמיד
-    if (user.role === 'student') {
-        // הסרה מכל הכיתות הקיימות
-        db.classes.forEach(aClass => {
-            aClass.students = aClass.students.filter(id => id !== userId);
-        });
-        
-        // הוספה לכיתות החדשות
-        user.classIds = studentClassIds;
-        studentClassIds.forEach(classId => {
-            const aClass = db.classes.find(c => c.id === classId);
-            if (aClass && !aClass.students.includes(userId)) {
-                aClass.students.push(userId);
-            }
-        });
+    const userIndex = db.users.findIndex(u => u.id === userId);
+    if (userIndex === -1) {
+        return res.status(404).json({ message: 'משתמש לא נמצא.' });
     }
     
-    await saveDb(`User ${userId} updated`); 
-    res.json({ message: 'המשתמש עודכן בהצלחה.' });
+    const user = db.users[userIndex];
+    
+    if (user.email === 'yairfrish2@gmail.com') {
+        return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
+    }
+
+    if (email !== user.email && db.users.some(u => u.email === email)) {
+         return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+    }
+    
+    const newClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
+    
+    if (newClassIds.length > 10) {
+        return res.status(400).json({ message: 'לא ניתן לשייך תלמיד ליותר מ-10 כיתות.' });
+    }
+    
+    const oldClassIds = user.classIds || [];
+    const added = newClassIds.filter(id => !oldClassIds.includes(id));
+    const removed = oldClassIds.filter(id => !newClassIds.includes(id));
+
+    added.forEach(classId => {
+        const aClass = db.classes.find(c => c.id === classId);
+        if (aClass && !aClass.students.includes(userId)) {
+            aClass.students.push(userId);
+        }
+    });
+
+    removed.forEach(classId => {
+        const aClass = db.classes.find(c => c.id === classId);
+        if (aClass) {
+            aClass.students = aClass.students.filter(sid => sid !== userId);
+        }
+    });
+    
+    user.fullname = fullname || user.fullname;
+    user.email = email || user.email;
+    user.role = role || user.role;
+    user.classIds = newClassIds;
+    if (password) {
+        user.password = bcrypt.hashSync(password, saltRounds);
+    }
+    
+    try {
+        await saveDatabase();
+        const { password: pw, ...safeUser } = user;
+        res.json(safeUser);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => {
     const userId = parseInt(req.params.id);
+    
     const userIndex = db.users.findIndex(u => u.id === userId);
-
-    if (userIndex === -1) return res.status(404).json({ message: 'משתמש לא נמצא.' });
-
+    if (userIndex === -1) {
+        return res.status(404).json({ message: 'משתמש לא נמצא.' });
+    }
+    
     const deletedUser = db.users[userIndex];
+
+    if (deletedUser.email === 'yairfrish2@gmail.com') {
+        return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
+    }
+    
     db.users.splice(userIndex, 1);
     
-    // הסרת תלמיד/מורה מכיתות
     if (deletedUser.role === 'student' && deletedUser.classIds) {
         deletedUser.classIds.forEach(classId => {
             const aClass = db.classes.find(c => c.id === classId);
@@ -291,127 +419,236 @@ app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => {
             }
         });
     }
-
-    if (deletedUser.role === 'teacher') {
-         db.classes.forEach(aClass => {
-            if (aClass.teacherId === userId) {
-                aClass.teacherId = null; // או מורה ברירת מחדל
-            }
-        });
-    }
     
-    await saveDb(`User ${userId} deleted`); 
-    res.json({ message: 'המשתמש נמחק בהצלחה.' });
+    try {
+        await saveDatabase();
+        res.json({ message: 'המשתמש נמחק בהצלחה.' });
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 // Classes Management
-app.post('/api/classes', isAuthenticated, isAdmin, async (req, res) => {
+app.get('/api/classes', (req, res) => {
+    res.json(db.classes);
+});
+
+app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const { name, grade, teacherId } = req.body;
-    const newClassId = getNextId(db.classes);
-    const newClass = { id: newClassId, name, grade, teacherId: parseInt(teacherId) || null, students: [] };
+    
+    const newClass = {
+        id: githubDB.getNextId('classes'),
+        name,
+        grade,
+        teacherId: parseInt(teacherId) || null,
+        students: []
+    };
     
     db.classes.push(newClass);
-    await saveDb(`New class created: ${newClass.name}`); 
-    res.status(201).json(newClass);
+    
+    try {
+        await saveDatabase();
+        res.status(201).json(newClass);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const classId = parseInt(req.params.id);
+    
     const classIndex = db.classes.findIndex(c => c.id === classId);
+    if (classIndex === -1) {
+        return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+    }
 
-    if (classIndex === -1) return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+    const aClass = db.classes[classIndex];
+    if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
+        return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
+    }
 
     db.classes.splice(classIndex, 1);
 
-    // הסרת השיוך מהתלמידים
     db.users.forEach(user => {
         if (user.role === 'student' && user.classIds) {
             user.classIds = user.classIds.filter(cid => cid !== classId);
         }
     });
 
-    await saveDb(`Class ${classId} deleted`); 
-    res.json({ message: 'הכיתה נמחקה בהצלחה.' });
+    try {
+        await saveDatabase();
+        res.json({ message: 'הכיתה נמחקה בהצלחה.' });
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
+});
+
+app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (req, res) => {
+    const classId = parseInt(req.params.id);
+    const { studentId } = req.body;
+    
+    const aClass = db.classes.find(c => c.id === classId);
+    
+    if (!aClass) {
+        return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+    }
+
+    if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
+        return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
+    }
+
+    const student = db.users.find(u => u.id === parseInt(studentId) && u.role === 'student');
+    
+    if (!student) {
+        return res.status(404).json({ message: 'תלמיד לא נמצא או שאינו תלמיד.' });
+    }
+    
+    if (!aClass.students.includes(student.id)) {
+        aClass.students.push(student.id);
+    }
+    if (!student.classIds.includes(classId)) {
+        student.classIds.push(classId);
+    }
+    
+    try {
+        await saveDatabase();
+        res.json(aClass);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 // Posts Management
+app.get('/api/posts', (req, res) => {
+    const user = req.session.user;
+    
+    if (!user) {
+        return res.json(db.posts.filter(p => !p.isPrivate));
+    }
+    
+    if (user.role === 'admin') {
+        return res.json(db.posts);
+    }
+    
+    const userClassIds = user.classIds || [];
+    const filteredPosts = db.posts.filter(post => 
+        !post.isPrivate || userClassIds.includes(post.classId)
+    );
+    
+    res.json(filteredPosts.sort((a, b) => new Date(b.date) - new Date(a.date)));
+});
+
 app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const { title, content, isPrivate, classId } = req.body;
-    const user = req.session.user;
-    const newPostId = getNextId(db.posts);
+    const author = req.session.user;
     
-    const newPost = { 
-        id: newPostId, 
-        title, 
-        content, 
-        authorId: user.id, 
-        authorName: user.fullname, 
-        date: new Date(), 
-        isPrivate: isPrivate === 'true', // מגיע כמחרוזת
-        classId: classId ? parseInt(classId) : null 
+    const newPost = {
+        id: githubDB.getNextId('posts'),
+        title,
+        content,
+        authorId: author.id,
+        authorName: author.fullname,
+        date: new Date(),
+        isPrivate: !!isPrivate,
+        classId: isPrivate ? (parseInt(classId) || null) : null
     };
     
     db.posts.push(newPost);
-    await saveDb(`New post created: ${newPost.title}`); 
-    res.status(201).json(newPost);
+    
+    try {
+        await saveDatabase();
+        res.status(201).json(newPost);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת ההודעה.' });
+    }
 });
 
 app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const postId = parseInt(req.params.id);
     const user = req.session.user;
+    
     const postIndex = db.posts.findIndex(p => p.id === postId);
-
-    if (postIndex === -1) return res.status(404).json({ message: 'הודעה לא נמצאה.' });
+    if (postIndex === -1) {
+        return res.status(404).json({ message: 'הודעה לא נמצאה.' });
+    }
     
     if (user.role === 'admin' || db.posts[postIndex].authorId === user.id) {
         db.posts.splice(postIndex, 1);
-        await saveDb(`Post ${postId} deleted`); 
-        res.json({ message: 'ההודעה נמחקה.' });
+        
+        try {
+            await saveDatabase();
+            res.json({ message: 'ההודעה נמחקה.' });
+        } catch (error) {
+            res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+        }
     } else {
         res.status(403).json({ message: 'אין לך הרשאה למחוק הודעה זו.' });
     }
 });
 
 // Assignments Management
+app.get('/api/assignments', (req, res) => {
+    const user = req.session.user;
+    
+    if (!user) {
+        return res.json([]); 
+    }
+    
+    if (user.role === 'admin') {
+        return res.json(db.assignments);
+    }
+    
+    if (user.role === 'teacher') {
+        const teacherAssignments = db.assignments.filter(a => a.teacherId === user.id);
+        return res.json(teacherAssignments);
+    }
+    
+    if (user.role === 'student') {
+        const userClassIds = user.classIds || [];
+        const studentAssignments = db.assignments.filter(a => userClassIds.includes(a.classId));
+        return res.json(studentAssignments);
+    }
+});
+
 app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const { title, description, dueDate, classId } = req.body;
-    const user = req.session.user;
-    const newAssignmentId = getNextId(db.assignments);
+    const teacher = req.session.user;
     
-    const newAssignment = { 
-        id: newAssignmentId, 
-        title, 
-        description, 
-        dueDate, 
-        teacherId: user.id, 
-        teacherName: user.fullname, 
-        classId: parseInt(classId), 
-        submissions: [] 
+    if (!classId) {
+        return res.status(400).json({ message: 'חובה לבחור כיתת יעד.' });
+    }
+    
+    const newAssignment = {
+        id: githubDB.getNextId('assignments'),
+        title,
+        description,
+        dueDate,
+        teacherId: teacher.id,
+        teacherName: teacher.fullname,
+        classId: parseInt(classId),
+        submissions: []
     };
     
     db.assignments.push(newAssignment);
-    await saveDb(`New assignment created: ${newAssignment.title}`); 
-    res.status(201).json(newAssignment);
+    
+    try {
+        await saveDatabase();
+        res.status(201).json(newAssignment);
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
-// <--- השינוי הקריטי להגשת קבצים (Cloudinary) --->
 app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), async (req, res) => {
     const assignmentId = parseInt(req.params.id);
     const student = req.session.user;
     
     if (student.role !== 'student') {
-        // אם הוגש קובץ, נמחק אותו כיוון שהמשתמש לא תלמיד
-        if (req.file && req.file.filename) {
-             await cloudinary.uploader.destroy(req.file.filename);
-        }
         return res.status(403).json({ message: 'רק תלמידים יכולים להגיש משימות.' });
     }
     
     const assignment = db.assignments.find(a => a.id === assignmentId);
     if (!assignment) {
-        if (req.file && req.file.filename) {
-             await cloudinary.uploader.destroy(req.file.filename);
-        }
         return res.status(404).json({ message: 'משימה לא נמצאה.' });
     }
     
@@ -422,30 +659,27 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
     const newSubmission = {
         studentId: student.id,
         studentName: student.fullname,
-        file: {
-            filename: req.file.filename, // זה ה-public_id ב-Cloudinary
-            path: req.file.path, // זה ה-URL המלא של הקובץ
-            mimetype: req.file.mimetype,
-            size: req.file.size
-        }, 
+        file: req.file, 
         date: new Date()
     };
     
     const existingSubmissionIndex = assignment.submissions.findIndex(s => s.studentId === student.id);
     if (existingSubmissionIndex > -1) {
-        const oldFilePublicId = assignment.submissions[existingSubmissionIndex].file.filename;
-        
-        // מחיקת הקובץ הישן מ-Cloudinary
-        if (oldFilePublicId) {
-             await cloudinary.uploader.destroy(oldFilePublicId);
+        const oldFile = assignment.submissions[existingSubmissionIndex].file.path;
+        if (fs.existsSync(oldFile)) {
+            fs.unlinkSync(oldFile);
         }
         assignment.submissions[existingSubmissionIndex] = newSubmission;
     } else {
         assignment.submissions.push(newSubmission);
     }
     
-    await saveDb(`New submission for assignment ${assignmentId} by ${student.fullname}`); 
-    res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
+    try {
+        await saveDatabase();
+        res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
+    } catch (error) {
+        res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+    }
 });
 
 app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => {
@@ -462,37 +696,32 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req
 
     if (user.role === 'admin' || assignment.teacherId === user.id) {
         try {
-            // מחיקת כל הקבצים מ-Cloudinary
-            const publicIdsToDelete = assignment.submissions
-                .map(sub => sub.file && sub.file.filename)
-                .filter(id => id); 
-                
-            if (publicIdsToDelete.length > 0) {
-                 // שימוש ב-delete_resources כדי למחוק מספר קבצים בבת אחת
-                 await cloudinary.api.delete_resources(publicIdsToDelete);
-            }
-
+            assignment.submissions.forEach(sub => {
+                if (sub.file && fs.existsSync(sub.file.path)) {
+                    fs.unlinkSync(sub.file.path);
+                }
+            });
         } catch (err) {
-            console.error("שגיאה במחיקת קבצי הגשה מ-Cloudinary:", err);
-            // נמשיך למחוק את הרשומה מה-DB
+            console.error("שגיאה במחיקת קבצי הגשה:", err);
         }
         
         db.assignments.splice(assignmentIndex, 1);
-        await saveDb(`Assignment ${assignmentId} and all submissions deleted`); 
-        res.json({ message: 'המשימה וכל הגשותיה נמחקו בהצלחה.' });
+        
+        try {
+            await saveDatabase();
+            res.json({ message: 'המשימה וכל הגשותיה נמחקו בהצלחה.' });
+        } catch (error) {
+            res.status(500).json({ message: 'שגיאה בשמירת הנתונים.' });
+        }
     } else {
         res.status(403).json({ message: 'אין לך הרשאה למחוק משימה זו.' });
     }
 });
-// <--- סוף השינוי הקריטי להגשת קבצים --->
 
-// --- הפעלת השרת החדשה ---
-async function startServer() {
-    await loadDb(); // טעינת מסד הנתונים מ-GitHub לפני הפעלת השרת
-    
-    app.listen(PORT, () => {
-        console.log(`🚀 השרת פועל בכתובת http://localhost:${PORT}`);
-    });
-}
-
-startServer();
+// --- Start Server ---
+app.listen(PORT, async () => {
+    await initializeApp();
+    console.log(`🚀 השרת פועל בכתובת http://localhost:${PORT}`);
+    console.log(`🔑 עמוד התחברות: http://localhost:${PORT}/login.html`);
+    console.log(`🏠 עמוד ראשי: http://localhost:${PORT}/index.html`);
+});
