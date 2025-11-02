@@ -1,0 +1,347 @@
+/* --- גלובלי --- */
+:root {
+    --primary-color: #3498db;
+    --danger-color: #e74c3c;
+    --success-color: #27ae60;
+    --header-color: #ffffff;
+    --text-color: #333;
+    --bg-color: #f4f7f6;
+    --border-color: #ddd;
+    --nav-bg: #ecf0f1;
+}
+
+body {
+    direction: rtl;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    line-height: 1.6;
+}
+
+a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+h1, h2, h3 {
+    margin-top: 0;
+}
+
+/* --- עמוד התחברות --- */
+.login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--primary-color), #2980b9);
+}
+
+.login-container {
+    background-color: var(--header-color);
+    padding: 2.5rem;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
+}
+.login-container h1 {
+    font-size: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+.back-link {
+    display: inline-block;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+}
+
+/* --- מבנה אפליקציה --- */
+.app-container {
+    display: grid;
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-columns: 1fr;
+    min-height: 100vh;
+}
+
+.app-header {
+    background-color: var(--primary-color);
+    color: var(--header-color);
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.app-header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+}
+#auth-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.app-nav {
+    background-color: var(--nav-bg);
+    padding: 0.5rem 2rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.app-content {
+    padding: 2rem;
+    overflow-y: auto;
+}
+
+.app-footer {
+    text-align: center;
+    padding: 1rem;
+    background-color: #eee;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9rem;
+}
+
+/* רספונסיביות בסיסית */
+@media (max-width: 600px) {
+    .app-header {
+        flex-direction: column;
+        padding: 1rem;
+    }
+    .app-nav {
+        padding: 0.5rem;
+        justify-content: center;
+    }
+    .app-content {
+        padding: 1rem;
+    }
+}
+
+
+/* --- רכיבים --- */
+.view {
+    animation: fadeIn 0.3s ease-out;
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+h2 {
+    border-bottom: 3px solid var(--primary-color);
+    padding-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+/* טפסים */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 1.5rem;
+    background-color: #fff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+}
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+.form-group-inline {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+label {
+    margin-bottom: 0.5rem;
+    font-weight: bold;
+}
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+select,
+textarea,
+input[type="file"] {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    box-sizing: border-box;
+    font-size: 1rem;
+}
+textarea {
+    resize: vertical;
+}
+
+/* כפתורים */
+.btn-primary, button[type="submit"] {
+    background-color: var(--primary-color);
+    color: var(--header-color);
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    cursor: pointer;
+    border: none;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+.btn-primary:hover, button[type="submit"]:hover {
+    background-color: #2980b9;
+}
+button[type="submit"] {
+    font-weight: bold;
+    grid-column: 1 / -1;
+    margin-top: 1rem;
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+    color: var(--header-color);
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.btn-danger:hover {
+    background-color: #c0392b;
+}
+.btn-small {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+}
+
+/* כפתורי ניווט */
+.nav-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    border: none;
+    border-radius: 4px;
+    background-color: transparent;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+.app-nav .nav-btn:hover {
+    background-color: rgba(0,0,0,0.1);
+}
+.app-nav .nav-btn.active {
+    background-color: var(--primary-color);
+    color: var(--header-color);
+    font-weight: bold;
+}
+#auth-controls .nav-btn {
+    color: var(--header-color);
+    background-color: rgba(255,255,255,0.2);
+}
+#auth-controls .nav-btn:hover {
+    background-color: rgba(255,255,255,0.3);
+}
+
+/* טבלאות */
+.table-container {
+    overflow-x: auto;
+    background-color: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-top: 1rem;
+}
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+th, td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    text-align: right;
+}
+thead th {
+    background-color: var(--nav-bg);
+    font-weight: bold;
+}
+tbody tr:hover {
+    background-color: #f9f9f9;
+}
+
+/* רשימות פריטים (כיתות, הודעות...) */
+.item-list {
+    display: grid;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+.item-card {
+    background-color: #fff;
+    padding: 1.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+.item-header h3 {
+    margin: 0;
+}
+.submit-assignment-form {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--border-color);
+}
+.details-list {
+    list-style: none;
+    padding: 0;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+.details-list li {
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+/* התראות */
+.message {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 4px;
+    font-weight: bold;
+}
+.message.success {
+    background-color: #d4edda;
+    color: #155724;
+}
+.message.error {
+    background-color: #f8d7da;
+    color: var(--danger-color);
+}
+
+#notification-area {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.notification {
+    padding: 1rem 2rem;
+    border-radius: 8px;
+    color: #fff;
+    font-weight: bold;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+}
+.notification.success {
+    background-color: var(--success-color);
+}
+.notification.error {
+    background-color: var(--danger-color);
+}
