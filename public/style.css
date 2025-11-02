@@ -178,6 +178,11 @@ input[type="file"] {
 textarea {
     resize: vertical;
 }
+select[multiple] {
+    height: auto;
+    padding: 0.5rem;
+}
+
 
 /* כפתורים */
 .btn-primary, button[type="submit"] {
@@ -257,6 +262,13 @@ th, td {
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--border-color);
     text-align: right;
+    vertical-align: middle;
+}
+td:last-child {
+    white-space: nowrap;
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
 }
 thead th {
     background-color: var(--nav-bg);
@@ -305,6 +317,31 @@ tbody tr:hover {
     font-size: 1.1rem;
     margin-bottom: 0.5rem;
 }
+
+/* (חדש) רשימת הגשות */
+.submissions-list {
+    list-style-type: none;
+    padding-right: 0;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px dashed var(--border-color);
+}
+.submissions-list li {
+    background-color: #f9f9f9;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+.submissions-list li small {
+    color: #555;
+}
+
 
 /* התראות */
 .message {
