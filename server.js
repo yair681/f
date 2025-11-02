@@ -60,6 +60,25 @@ function loadDb() {
             const data = fs.readFileSync(DB_PATH, 'utf-8');
             db = JSON.parse(data);
             console.log("מסד הנתונים נטען בהצלחה.");
+
+            // (חדש) מיגרציה עבור פוסטים - classId הופך ל-classIds
+            let needsSave = false;
+            db.posts.forEach(post => {
+                if (post.isPrivate && post.classId && !post.classIds) {
+                    // אם יש classId (ישן) ואין classIds (חדש)
+                    post.classIds = [post.classId]; // הפוך למערך
+                    delete post.classId; // מחק את השדה הישן
+                    needsSave = true;
+                } else if (!post.classIds) {
+                    // ודא שלכל פוסט יש את המערך, גם אם ריק
+                    post.classIds = [];
+                }
+            });
+            if (needsSave) {
+                console.log("מבצע מיגרציה של פוסטים לפורמט classIds...");
+                saveDb();
+            }
+
         } else {
             // נתוני דוגמה אם הקובץ לא קיים
             const adminPass = bcrypt.hashSync('yair12345', saltRounds);
@@ -75,8 +94,8 @@ function loadDb() {
                 { id: 101, name: "כיתה א'1", grade: "א", teacherId: 2, students: [3] }
             ];
             db.posts = [
-                { id: 1, title: 'ברוכים הבאים לאתר', content: 'שנת לימודים מוצלחת ומהנה לכולם!', authorId: 1, authorName: "יאיר פריש", date: new Date(), isPrivate: false, classId: null },
-                { id: 2, title: 'שיעורי בית בחשבון', content: 'נא להכין עמוד 10 בספר.', authorId: 2, authorName: "מרים כהן", date: new Date(), isPrivate: true, classId: 101 }
+                { id: 1, title: 'ברוכים הבאים לאתר', content: 'שנת לימודים מוצלחת ומהנה לכולם!', authorId: 1, authorName: "יאיר פריש", date: new Date(), isPrivate: false, classIds: [] },
+                { id: 2, title: 'שיעורי בית בחשבון', content: 'נא להכין עמוד 10 בספר.', authorId: 2, authorName: "מרים כהן", date: new Date(), isPrivate: true, classIds: [101] } // מעודכן ל-classIds
             ];
             db.assignments = [
                 { id: 1, title: 'משימה בחשבון', description: 'לפתור את 10 התרגילים בעמוד 10.', dueDate: '2025-11-10', teacherId: 2, teacherName: "מרים כהן", classId: 101, submissions: [] }
@@ -216,7 +235,8 @@ app.put('/api/profile', isAuthenticated, (req, res) => {
 });
 
 // Users Management (Admin)
-app.get('/api/users', isAuthenticated, isAdmin, (req, res) => {
+// (חדש) גם מורים יכולים לראות משתמשים (כדי לשייך אותם)
+app.get('/api/users', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const safeUsers = db.users.map(u => {
         const { password, ...safeUser } = u;
         return safeUser;
@@ -269,8 +289,8 @@ app.post('/api/users', isAuthenticated, isAdmin, (req, res) => {
     res.status(201).json(safeUser);
 });
 
-// (חדש) עריכת משתמש
-app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
+// (חדש) עריכת משתמש - עכשיו גם למורים
+app.put('/api/users/:id', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const userId = parseInt(req.params.id);
     let { fullname, email, role, classIds, password } = req.body;
 
@@ -281,23 +301,54 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const user = db.users[userIndex];
     
-    // (חדש) הגנה על משתמש
+    // הגנה על משתמש
     if (user.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
     }
+    
+    const newClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
+    if (newClassIds.length > 10) {
+        return res.status(400).json({ message: 'לא ניתן לשייך תלמיד ליותר מ-10 כיתות.' });
+    }
 
+    // --- (חדש) הרשאות מורה ---
+    if (req.session.user.role === 'teacher') {
+        // מורה יכול לעדכן *רק* שיוך כיתתי
+        
+        // עדכון שיוך כיתות
+        const oldClassIds = user.classIds || [];
+        const added = newClassIds.filter(id => !oldClassIds.includes(id));
+        const removed = oldClassIds.filter(id => !newClassIds.includes(id));
+
+        added.forEach(classId => {
+            const aClass = db.classes.find(c => c.id === classId);
+            if (aClass && !aClass.students.includes(userId)) {
+                aClass.students.push(userId);
+            }
+        });
+
+        removed.forEach(classId => {
+            const aClass = db.classes.find(c => c.id === classId);
+            if (aClass) {
+                aClass.students = aClass.students.filter(sid => sid !== userId);
+            }
+        });
+        
+        user.classIds = newClassIds; // עדכן רק את זה
+        
+        saveDb();
+        const { password: pw, ...safeUser } = user;
+        return res.json(safeUser); // וצא
+    }
+    // --- סוף הרשאות מורה ---
+    
+    // --- הרשאות מנהל (המשך רגיל) ---
     // בדיקת אימייל (אם השתנה)
     if (email !== user.email && db.users.some(u => u.email === email)) {
          return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
     }
     
-    const newClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
-    
-    if (newClassIds.length > 10) {
-        return res.status(400).json({ message: 'לא ניתן לשייך תלמיד ליותר מ-10 כיתות.' });
-    }
-    
-    // עדכון שיוך כיתות
+    // עדכון שיוך כיתות (עבור מנהל)
     const oldClassIds = user.classIds || [];
     const added = newClassIds.filter(id => !oldClassIds.includes(id));
     const removed = oldClassIds.filter(id => !newClassIds.includes(id));
@@ -316,7 +367,7 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
         }
     });
     
-    // עדכון פרטי משתמש
+    // עדכון פרטי משתמש (עבור מנהל)
     user.fullname = fullname || user.fullname;
     user.email = email || user.email;
     user.role = role || user.role;
@@ -333,6 +384,7 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
 
 
 app.delete('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
+    // רק מנהל יכול למחוק משתמשים
     const userId = parseInt(req.params.id);
     
     const userIndex = db.users.findIndex(u => u.id === userId);
@@ -342,14 +394,12 @@ app.delete('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const deletedUser = db.users[userIndex];
 
-    // (חדש) הגנה על משתמש
     if (deletedUser.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
     }
     
     db.users.splice(userIndex, 1);
     
-    // הסרת תלמיד מכיתות
     if (deletedUser.role === 'student' && deletedUser.classIds) {
         deletedUser.classIds.forEach(classId => {
             const aClass = db.classes.find(c => c.id === classId);
@@ -368,14 +418,15 @@ app.get('/api/classes', (req, res) => {
     res.json(db.classes);
 });
 
-app.post('/api/classes', isAuthenticated, isAdmin, (req, res) => {
+// (חדש) מורים יכולים ליצור כיתות
+app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const { name, grade, teacherId } = req.body;
     
     const newClass = {
         id: getNextId(db.classes),
         name,
         grade,
-        teacherId: parseInt(teacherId) || null,
+        teacherId: parseInt(teacherId) || req.session.user.id, // אם לא נבחר מורה, נשייך ליוצר
         students: []
     };
     
@@ -384,7 +435,6 @@ app.post('/api/classes', isAuthenticated, isAdmin, (req, res) => {
     res.status(201).json(newClass);
 });
 
-// (חדש) מחיקת כיתה
 app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
     
@@ -393,7 +443,6 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
         return res.status(404).json({ message: 'כיתה לא נמצאה.' });
     }
 
-    // (אופציונלי - רק מנהל או המורה *המשויך* יכולים למחוק)
     const aClass = db.classes[classIndex];
     if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
         return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
@@ -401,7 +450,6 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 
     db.classes.splice(classIndex, 1);
 
-    // הסרת השיוך מהתלמידים
     db.users.forEach(user => {
         if (user.role === 'student' && user.classIds) {
             user.classIds = user.classIds.filter(cid => cid !== classId);
@@ -413,8 +461,8 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 });
 
 
-// (מודל ישן - לא בשימוש ב-UI החדש, אבל נשאר ליתר ביטחון)
 app.post('/api/classes/:id/students', isAuthenticated, isAdmin, (req, res) => {
+    // השארתי את זה רק למנהלים, כי הלוגיקה החדשה עובדת דרך PUT /api/users/:id
     const classId = parseInt(req.params.id);
     const { studentId } = req.body;
     
@@ -425,7 +473,6 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdmin, (req, res) => {
         return res.status(404).json({ message: 'כיתה או תלמיד לא נמצאו.' });
     }
     
-    // הוספה לכיתה חדשה
     if (!aClass.students.includes(studentId)) {
         aClass.students.push(studentId);
     }
@@ -439,7 +486,7 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdmin, (req, res) => {
 
 // Posts Management
 app.get('/api/posts', (req, res) => {
-    const user = req.session.user; // יכול להיות null
+    const user = req.session.user; 
     
     if (!user) {
         return res.json(db.posts.filter(p => !p.isPrivate));
@@ -449,17 +496,18 @@ app.get('/api/posts', (req, res) => {
         return res.json(db.posts); // מנהל רואה הכל
     }
     
-    // מורה ותלמיד רואים הודעות ציבוריות + הודעות כיתתיות
+    // (חדש) לוגיקת סינון לפי מערך
     const userClassIds = user.classIds || [];
     const filteredPosts = db.posts.filter(post => 
-        !post.isPrivate || userClassIds.includes(post.classId)
+        !post.isPrivate || (post.classIds && post.classIds.some(cid => userClassIds.includes(cid)))
     );
     
     res.json(filteredPosts.sort((a, b) => new Date(b.date) - new Date(a.date)));
 });
 
+// (חדש) עדכון לקבלת מערך classIds
 app.post('/api/posts', isAuthenticated, isAdminOrTeacher, (req, res) => {
-    const { title, content, isPrivate, classId } = req.body;
+    const { title, content, isPrivate, classIds } = req.body;
     const author = req.session.user;
     
     const newPost = {
@@ -470,8 +518,7 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, (req, res) => {
         authorName: author.fullname,
         date: new Date(),
         isPrivate: !!isPrivate,
-        // אם פרטי, השתמש בכיתה שנבחרה, או בכיתה (הראשונה) של המורה אם לא נבחרה
-        classId: isPrivate ? (parseInt(classId) || (author.classIds && author.classIds[0])) : null
+        classIds: (!!isPrivate && classIds) ? classIds.map(Number) : [] // שמירת המערך
     };
     
     db.posts.push(newPost);
@@ -506,18 +553,16 @@ app.get('/api/assignments', (req, res) => {
     }
     
     if (user.role === 'admin') {
-        return res.json(db.assignments); // מנהל רואה הכל
+        return res.json(db.assignments); 
     }
     
     if (user.role === 'teacher') {
-        // מורה רואה משימות שהוא יצר + משימות לכיתות שהוא משויך אליהן (אם רוצים)
         const teacherAssignments = db.assignments.filter(a => a.teacherId === user.id);
         return res.json(teacherAssignments);
     }
     
     if (user.role === 'student') {
         const userClassIds = user.classIds || [];
-        // תלמיד רואה משימות של הכיתות שלו
         const studentAssignments = db.assignments.filter(a => userClassIds.includes(a.classId));
         return res.json(studentAssignments);
     }
