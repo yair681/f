@@ -11,7 +11,7 @@ const knexConfig = {
     client: 'pg', // PostgreSQL driver
     connection: process.env.DATABASE_URL || 'postgres://localhost/school_db',
     useNullAsDefault: true,
-    // התיקון לבעיית SSL/TLS required
+    // *** תיקון 1: הוספת הגדרת SSL לחיבור Render ***
     ssl: {
         rejectUnauthorized: false
     }
@@ -63,7 +63,7 @@ async function getSequentialId(tableName, initialId = 1) {
     try {
         const result = await db(tableName).max('id as maxId').first();
         
-        // ********* התיקון לטיפול ב-Postgres שמחזיר לעיתים אובייקט *********
+        // *** תיקון 2: ודא שהתוצאה היא מספר שלם ולא אובייקט ***
         let maxId = result.maxId;
         // Knex יכול להחזיר את הערך בתוך שדה 'max' בתוך האובייקט
         if (typeof result.maxId === 'object' && result.maxId !== null && result.maxId.max !== undefined) {
@@ -302,8 +302,9 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
     }
 });
 
-// Users Management (Admin)
-app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
+// Users Management (Admin/Teacher)
+// *** תיקון 3: מאפשר גם למורים לגשת לרשימת המשתמשים הכללית ***
+app.get('/api/users', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     try {
         const safeUsers = await db('users').select('id', 'fullname', 'email', 'role', 'classIds');
         res.json(safeUsers);
@@ -330,7 +331,7 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
         
         const hashedPassword = bcrypt.hashSync(password, saltRounds);
 
-        // ********* תיקון קריטי: חילוץ ID נכון מ-Knex/Postgres *********
+        // *** תיקון 2: חילוץ ID נכון מ-Knex/Postgres ***
         const returnedId = await db('users').insert({
             fullname,
             email,
@@ -772,7 +773,7 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req
         if (user.role === 'admin' || assignment.teacherId === user.id) {
             try {
                 let submissions = assignment.submissions || [];
-                 // ********* תיקון קריטי: ודא ש-submissions הוא מערך *********
+                 // ודא ש-submissions הוא מערך לפני ה-forEach
                 if (!Array.isArray(submissions)) {
                      submissions = [];
                 }
@@ -782,7 +783,6 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req
                     }
                 });
             } catch (err) {
-                // שגיאה זו נלכדה ביומן השרת שלך: 'TypeError: (assignment.submissions || []).forEach is not a function'
                 console.error("❌ שגיאה במחיקת קבצי הגשה:", err);
             }
             
@@ -815,3 +815,4 @@ app.listen(PORT, async () => {
         process.exit(1);
     }
 });
+
