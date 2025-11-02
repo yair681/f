@@ -421,6 +421,43 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
     res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
 });
 
+// ===== קוד חדש למחיקת משימה =====
+app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, (req, res) => {
+    const assignmentId = parseInt(req.params.id);
+    const user = req.session.user;
+
+    const assignmentIndex = assignments.findIndex(a => a.id === assignmentId);
+
+    if (assignmentIndex === -1) {
+        return res.status(404).json({ message: 'משימה לא נמצאה.' });
+    }
+
+    const assignment = assignments[assignmentIndex];
+
+    // מנהל יכול למחוק הכל, מורה יכול למחוק רק משימות שהוא יצר
+    if (user.role === 'admin' || assignment.teacherId === user.id) {
+        
+        // (מומלץ) מחיקת קבצי הגשות קיימים מהשרת
+        try {
+            assignment.submissions.forEach(sub => {
+                if (sub.file && fs.existsSync(sub.file.path)) {
+                    fs.unlinkSync(sub.file.path);
+                }
+            });
+        } catch (err) {
+            console.error("שגיאה במחיקת קבצי הגשה:", err);
+            // לא עוצרים את התהליך, רק מתעדים את השגיאה
+        }
+        
+        // מחיקת המשימה מהמערך
+        assignments.splice(assignmentIndex, 1);
+        res.json({ message: 'המשימה וכל הגשותיה נמחקו בהצלחה.' });
+    } else {
+        res.status(403).json({ message: 'אין לך הרשאה למחוק משימה זו.' });
+    }
+});
+// ===================================
+
 
 // --- הפעלת השרת ---
 app.listen(PORT, () => {
