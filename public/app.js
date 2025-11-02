@@ -41,6 +41,8 @@ document.addEventListener('DOMContentLoaded', () => {
         authControlsEl.addEventListener('click', handleAuthClick);
         contentEl.addEventListener('click', handleContentClick);
         contentEl.addEventListener('submit', handleFormSubmit);
+        // *** שינוי כאן: מאזין לשינויים (כמו צ'קבוקס) ***
+        contentEl.addEventListener('change', handleContentChange);
     }
 
     // --- Layout Rendering ---
@@ -88,6 +90,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (currentUser.role === 'admin') {
                 navLinks += `
                     <button class="nav-btn" data-view="users">👥 ניהול משתמשים</button>
+                `;
+            }
+            
+            // *** שינוי כאן: מנהל וגם מורה יכולים לנהל כיתות ***
+            if (currentUser.role === 'admin' || currentUser.role === 'teacher') {
+                 navLinks += `
                     <button class="nav-btn" data-view="classes">🏫 ניהול כיתות</button>
                 `;
             }
@@ -234,11 +242,34 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // *** שינוי כאן: טעינת כיתות רלוונטיות לטופס ***
     async function loadPosts() {
         showLoading();
         const canPost = state.currentUser.role === 'admin' || state.currentUser.role === 'teacher';
         
+        let classOptions = ''; // (חדש)
+        
         try {
+            // (חדש) אם יכול לפרסם, טען את הכיתות שלו
+            if (canPost) {
+                try {
+                    const res = await fetch('/api/classes');
+                    const classes = await res.json();
+                    
+                    if (state.currentUser.role === 'admin') {
+                        // מנהל יכול לפרסם לכל כיתה
+                        classOptions = classes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                    } else {
+                        // מורה יכול לפרסם לכיתות שלו
+                        classOptions = classes
+                            .filter(c => c.teacherId === state.currentUser.id)
+                            .map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                    }
+                } catch (e) {
+                    console.warn("Could not load classes for post form:", e);
+                }
+            }
+
             const res = await fetch('/api/posts');
             const posts = await res.json();
             
@@ -256,6 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 `).join('')
                 : '<p>אין הודעות להצגה.</p>';
 
+            // *** שינוי כאן: הוספת שדה בחירת כיתה לטופס ***
             render(`
                 <section class="view">
                     <h2>📢 הודעות וחדשות</h2>
@@ -275,6 +307,15 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <input type="checkbox" id="post-isPrivate">
                                 <label for="post-isPrivate">הודעה כיתתית?</label>
                             </div>
+                            
+                            <div class="form-group" id="post-class-group" style="display:none; flex-direction: column;">
+                                <label for="post-classId">בחר כיתה:</label>
+                                <select id="post-classId">
+                                    <option value="">בחר כיתה...</option>
+                                    ${classOptions}
+                                </select>
+                            </div>
+                            
                             <button type="submit">➕ פרסם הודעה</button>
                         </form>
                     ` : ''}
@@ -525,29 +566,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
+    // *** שינוי כאן: ממשק ניהול כיתות הורחב ***
     async function loadClasses() {
         showLoading();
         try {
             const [classesRes, usersRes] = await Promise.all([
                 fetch('/api/classes'),
-                fetch('/api/users') // נדרש לשמות המורים
+                fetch('/api/users') // נדרש לשמות המורים + רשימת תלמידים
             ]);
             state.classes = await classesRes.json();
-            state.users = await usersRes.json();
+            state.users = await usersRes.json(); // זה כבר מכיל את *כל* המשתמשים
             
             const teachers = state.users.filter(u => u.role === 'teacher');
             const teacherOptions = teachers.map(t => `<option value="${t.id}">${t.fullname}</option>`).join('');
 
+            // (חדש) נכין רשימת תלמידים לבחירה
+            const students = state.users.filter(u => u.role === 'student');
+            const studentOptions = students.map(s => `<option value="${s.id}">${s.fullname} (ID: ${s.id})</option>`).join('');
+
             const classesHtml = state.classes.map(c => {
                 const teacher = state.users.find(u => u.id === c.teacherId);
+                
+                // (חדש) בדיקה אם המשתמש הנוכחי יכול לנהל את הכיתה (מנהל או המורה שלה)
+                const canManageClass = state.currentUser.role === 'admin' || c.teacherId === state.currentUser.id;
+                
+                // (חדש) רשימת תלמידים בכיתה
+                const studentsInClass = c.students.map(studentId => {
+                    const s = state.users.find(u => u.id === studentId);
+                    return s ? `<li>${s.fullname}</li>` : `<li>תלמיד לא ידוע (ID: ${studentId})</li>`;
+                }).join('');
+
                 return `
                     <article class="item-card">
                         <div class="item-header">
                             <h3>🏫 ${c.name} (שכבה ${c.grade})</h3>
+                            ${canManageClass ? `
                             <button class="btn-danger btn-small" data-action="delete-class" data-id="${c.id}">🗑️ מחק</button>
+                            ` : ''}
                         </div>
                         <p>👨‍🏫 <strong>מורה:</strong> ${teacher ? teacher.fullname : 'ללא שיוך'}</p>
                         <p>👥 <strong>מספר תלמידים:</strong> ${c.students.length}</p>
+                        
+                        <details>
+                            <summary>הצג רשימת תלמידים (${c.students.length})</summary>
+                            <ul>${studentsInClass || '<li>אין תלמידים משויכים</li>'}</ul>
+                        </details>
+                        
+                        ${canManageClass ? `
+                        <form class="add-student-to-class-form form-grid" data-class-id="${c.id}" style="padding: 1rem 0 0 0; margin-top: 1rem; border-top: 1px dashed #ccc; grid-template-columns: 1fr auto; gap: 0.5rem;">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label for="student-to-add-${c.id}" style="margin-bottom: 0.2rem; font-size: 0.9rem;">הוסף תלמיד לכיתה:</label>
+                                <select id="student-to-add-${c.id}" required>
+                                    <option value="">בחר תלמיד...</option>
+                                    ${studentOptions}
+                                </select>
+                            </div>
+                            <button type="submit" class="btn-primary btn-small" style="margin-top: 0; align-self: end; grid-column: auto;">➕ הוסף</button>
+                        </form>
+                        ` : ''}
                     </article>
                 `;
             }).join('');
@@ -624,6 +700,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // --- Event Handlers (Delegation) ---
+
+    // *** שינוי כאן: פונקציה חדשה לטיפול בשינויים (כמו צ'קבוקס) ***
+    function handleContentChange(e) {
+        if (e.target.id === 'post-isPrivate') {
+            document.getElementById('post-class-group').style.display = e.target.checked ? 'flex' : 'none';
+        }
+    }
+
     function handleContentClick(e) {
         const action = e.target.dataset.action;
         const id = e.target.dataset.id;
@@ -703,6 +787,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // *** שינוי כאן: טיפול בטפסים החדשים ***
     async function handleFormSubmit(e) {
         e.preventDefault();
         const form = e.target;
@@ -744,21 +829,37 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             
             if (form.id === 'add-class-form') {
+                // (חדש) אם מורה יוצר כיתה, נשייך אותו אוטומטית אם הוא לא בחר מישהו אחר
+                let teacherId = form['class-teacherId'].value;
+                if (!teacherId && state.currentUser.role === 'teacher') {
+                    teacherId = state.currentUser.id;
+                }
+                
                 const body = {
                     name: form['class-name'].value,
                     grade: form['class-grade'].value,
-                    teacherId: form['class-teacherId'].value || null
+                    teacherId: teacherId || null
                 };
                 await postForm('/api/classes', body, 'כיתה נוצרה בהצלחה', loadClasses);
             }
-
+            
+            // *** שינוי כאן: טיפול בבחירת כיתה ***
             if (form.id === 'add-post-form') {
+                const isPrivate = form['post-isPrivate'].checked;
+                const classId = form['post-classId'].value;
+                
+                // (חדש) בדיקה: אם פרטי, חייבים לבחור כיתה
+                if (isPrivate && !classId) {
+                    showNotification('יש לבחור כיתה עבור הודעה כיתתית.', 'error');
+                    return; // עצירת השליחה
+                }
+                
                 const body = {
                     title: form['post-title'].value,
                     content: form['post-content'].value,
-                    isPrivate: form['post-isPrivate'].checked,
-                    // (חדש) תמיכה בריבוי כיתות - שולח את הכיתה הראשונה של המורה
-                    classId: form['post-isPrivate'].checked ? (state.currentUser.classIds ? state.currentUser.classIds[0] : null) : null
+                    isPrivate: isPrivate,
+                    // (חדש) שליחת ה-classId שנבחר
+                    classId: isPrivate ? classId : null
                 };
                 await postForm('/api/posts', body, 'הודעה פורסמה בהצלחה', loadPosts);
             }
@@ -771,6 +872,20 @@ document.addEventListener('DOMContentLoaded', () => {
                     classId: form['assign-classId'].value
                 };
                 await postForm('/api/assignments', body, 'משימה נוצרה בהצלחה', loadAssignments);
+            }
+            
+            // *** שינוי כאן: טיפול בטופס הוספת תלמיד לכיתה ***
+            if (form.classList.contains('add-student-to-class-form')) {
+                const classId = form.dataset.classId;
+                const studentId = form.querySelector('select').value;
+                
+                if (!studentId) {
+                    return showNotification('יש לבחור תלמיד.', 'error');
+                }
+                
+                const body = { studentId };
+                
+                await postForm(`/api/classes/${classId}/students`, body, 'תלמיד נוסף לכיתה בהצלחה', loadClasses);
             }
             
             if (form.id === 'update-profile-form') {
