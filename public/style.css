@@ -183,6 +183,15 @@ select[multiple] {
     padding: 0.5rem;
 }
 
+/* (חדש) סגנון לשדות נעולים */
+input:disabled,
+select:disabled,
+textarea:disabled {
+    background-color: #f0f0f0;
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
 
 /* כפתורים */
 .btn-primary, button[type="submit"] {
@@ -318,7 +327,7 @@ tbody tr:hover {
     margin-bottom: 0.5rem;
 }
 
-/* (חדש) רשימת הגשות */
+/* רשימת הגשות */
 .submissions-list {
     list-style-type: none;
     padding-right: 0;
