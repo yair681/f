@@ -40,7 +40,7 @@ app.use(session({
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: false, // בסביבת פיתוח. ב-production יש להגדיר true (דורש HTTPS)
+        secure: false, // חייב להיות false ב-http (כמו localhost)
         maxAge: 1000 * 60 * 60 * 24 // 24 שעות
     }
 }));
@@ -69,7 +69,7 @@ const getNextId = (collection) => {
 };
 
 
-// פונקציה חדשה שנוספה כדי לוודא שמשתמשי הדוגמה תמיד קיימים ומוצפנים.
+// פונקציה שמבטיחה שמשתמשי הדוגמה קיימים ומוצפנים
 function ensureDefaultUsers() {
     const defaultUsersData = [
         { fullname: "יאיר פריש", email: "yairfrish2@gmail.com", plaintextPassword: 'yair12345', role: "admin", classIds: [] },
@@ -103,9 +103,13 @@ function ensureDefaultUsers() {
                  existingUser.password = bcrypt.hashSync(defaultUser.plaintextPassword, saltRounds);
                  dbChanged = true;
             }
-            // עדכון שדות נוספים אם המשתמש קיים (למשל תפקיד)
+            // עדכון שדות נוספים אם המשתמש קיים (למשל תפקיד, כיתות)
             if (existingUser.role !== defaultUser.role) {
                 existingUser.role = defaultUser.role;
+                dbChanged = true;
+            }
+             if (!arraysEqual(existingUser.classIds, defaultUser.classIds)) {
+                existingUser.classIds = defaultUser.classIds;
                 dbChanged = true;
             }
         }
@@ -123,13 +127,34 @@ function ensureDefaultUsers() {
     }
 }
 
+// פונקציית עזר להשוואת מערכים
+function arraysEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+    if (a.length !== b.length) return false;
+
+    // יוצר עותקים וממיין כדי להתעלם מהסדר
+    const sortedA = [...a].sort();
+    const sortedB = [...b].sort();
+
+    for (let i = 0; i < sortedA.length; i++) {
+        if (sortedA[i] !== sortedB[i]) return false;
+    }
+    return true;
+}
+
 
 function loadDb() {
     try {
         if (fs.existsSync(DB_PATH)) {
             const data = fs.readFileSync(DB_PATH, 'utf-8');
-            db = JSON.parse(data);
-            console.log("מסד הנתונים נטען בהצלחה.");
+            // אם הקובץ ריק, JSON.parse ייכשל. ננסה לטפל בזה.
+            if (data.trim().length > 0) {
+                 db = JSON.parse(data);
+                 console.log("מסד הנתונים נטען בהצלחה.");
+            } else {
+                console.log("קובץ db.json קיים אך ריק. משתמש במסד נתונים ריק.");
+            }
         } else {
              console.log("קובץ db.json לא נמצא. יוצר מסד נתונים ריק.");
         }
@@ -138,38 +163,28 @@ function loadDb() {
         ensureDefaultUsers();
         
     } catch (error) {
+        // אם JSON.parse נכשל (SyntaxError), אנחנו נתקעים כאן.
         console.error("שגיאה בטעינת מסד הנתונים:", error);
+        // ננסה לתקן את הקובץ הפגום על ידי יצירת db.json חדש עם הנתונים הנוכחיים
+        // (הערה: קטע זה מיועד לטיפול ב-SyntaxError שקיבלת)
+        if (error.name === 'SyntaxError') {
+             console.log("Attempting to recover from corrupted db.json by resetting to default structure...");
+             // אם הייתה שגיאת תחביר, נאפס את ה-DB בזיכרון
+             db = { users: [], classes: [], posts: [], assignments: [] };
+             ensureDefaultUsers(); // נשמור את ה-DB החדש והתקין
+             console.log("Recovery successful. DB reset to default users.");
+             return; // חזרה מפונקציה
+        }
+        
         process.exit(1); // עצירת השרת אם אי אפשר לטעון DB
     }
 }
 
 
-// --- Middleware - אימות והרשאות ---
-const isAuthenticated = (req, res, next) => {
-    if (req.session.user) {
-        next();
-    } else {
-        res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
-    }
-};
-
-const isAdmin = (req, res, next) => {
-    if (req.session.user && req.session.user.role === 'admin') {
-        next();
-    } else {
-        res.status(403).json({ message: 'אין לך הרשאה לבצע פעולה זו.' });
-    }
-};
-
-const isAdminOrTeacher = (req, res, next) => {
-    if (req.session.user && (req.session.user.role === 'admin' || req.session.user.role === 'teacher')) {
-        next();
-    } else {
-        res.status(403).json({ message: 'רק מנהלים או מורים רשאים לבצע פעולה זו.' });
-    }
-};
-
 // --- API Endpoints ---
+// ... (כל נקודות הקצה שלך, לוגין, לוגאאוט, ניהול משתמשים וכו')
+// ... (הקוד המלא של נקודות הקצה, כפי שסיפקתי לך בשלב 3)
+// ...
 
 // Authentication (עם לוגים לאבחון שגיאת 401)
 app.post('/api/login', (req, res) => {
@@ -203,6 +218,34 @@ app.post('/api/login', (req, res) => {
     }
 });
 
+// ... (שאר הקוד של נקודות הקצה כמו בגרסה הקודמת) ...
+
+// --- Middleware - אימות והרשאות ---
+const isAuthenticated = (req, res, next) => {
+    if (req.session.user) {
+        next();
+    } else {
+        res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
+    }
+};
+
+const isAdmin = (req, res, next) => {
+    if (req.session.user && req.session.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ message: 'אין לך הרשאה לבצע פעולה זו.' });
+    }
+};
+
+const isAdminOrTeacher = (req, res, next) => {
+    if (req.session.user && (req.session.user.role === 'admin' || req.session.user.role === 'teacher')) {
+        next();
+    } else {
+        res.status(403).json({ message: 'רק מנהלים או מורים רשאים לבצע פעולה זו.' });
+    }
+};
+
+
 app.post('/api/logout', (req, res) => {
     req.session.destroy(err => {
         if (err) {
@@ -215,7 +258,6 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', (req, res) => {
     if (req.session.user) {
-        // רענון המידע מה-DB (למקרה שמשתמש אחר ערך אותו)
         const freshUser = db.users.find(u => u.id === req.session.user.id);
         if (freshUser) {
             const userSession = { ...freshUser };
@@ -223,7 +265,6 @@ app.get('/api/me', (req, res) => {
             req.session.user = userSession;
             res.json(userSession);
         } else {
-            // המשתמש נמחק מה-DB, נתק אותו
             req.session.destroy(() => {
                 res.json(null);
             });
@@ -242,12 +283,10 @@ app.put('/api/profile', isAuthenticated, (req, res) => {
         return res.status(404).json({ message: 'משתמש לא נמצא.' });
     }
     
-    // הגנה על המשתמש הראשי
     if (db.users[userIndex].email === 'yairfrish2@gmail.com' && email !== 'yairfrish2@gmail.com') {
          return res.status(403).json({ message: 'לא ניתן לשנות את האימייל של משתמש זה.' });
     }
 
-    // בדיקה אם האימייל החדש תפוס
     if (email !== db.users[userIndex].email && db.users.some(u => u.email === email)) {
         return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
     }
@@ -260,11 +299,11 @@ app.put('/api/profile', isAuthenticated, (req, res) => {
         user.password = bcrypt.hashSync(password, saltRounds);
     }
     
-    saveDb(); // שמירת השינויים
+    saveDb(); 
     
     const userSession = { ...user };
     delete userSession.password;
-    req.session.user = userSession; // עדכון הסשן
+    req.session.user = userSession; 
     
     res.json(userSession);
 });
@@ -307,7 +346,6 @@ app.post('/api/users', isAuthenticated, isAdmin, (req, res) => {
     
     db.users.push(newUser);
     
-    // הוספת תלמיד לכיתות
     if (role === 'student') {
         studentClassIds.forEach(classId => {
             const aClass = db.classes.find(c => c.id === classId);
@@ -323,7 +361,6 @@ app.post('/api/users', isAuthenticated, isAdmin, (req, res) => {
     res.status(201).json(safeUser);
 });
 
-// עריכת משתמש
 app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     const userId = parseInt(req.params.id);
     let { fullname, email, role, classIds, password } = req.body;
@@ -335,12 +372,10 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const user = db.users[userIndex];
     
-    // הגנה על משתמש
     if (user.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
     }
 
-    // בדיקת אימייל (אם השתנה)
     if (email !== user.email && db.users.some(u => u.email === email)) {
          return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
     }
@@ -351,7 +386,6 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
         return res.status(400).json({ message: 'לא ניתן לשייך תלמיד ליותר מ-10 כיתות.' });
     }
     
-    // עדכון שיוך כיתות
     const oldClassIds = user.classIds || [];
     const added = newClassIds.filter(id => !oldClassIds.includes(id));
     const removed = oldClassIds.filter(id => !newClassIds.includes(id));
@@ -370,7 +404,6 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
         }
     });
     
-    // עדכון פרטי משתמש
     user.fullname = fullname || user.fullname;
     user.email = email || user.email;
     user.role = role || user.role;
@@ -396,14 +429,12 @@ app.delete('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const deletedUser = db.users[userIndex];
 
-    // הגנה על משתמש
     if (deletedUser.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
     }
     
     db.users.splice(userIndex, 1);
     
-    // הסרת תלמיד מכיתות
     if (deletedUser.role === 'student' && deletedUser.classIds) {
         deletedUser.classIds.forEach(classId => {
             const aClass = db.classes.find(c => c.id === classId);
@@ -422,21 +453,17 @@ app.get('/api/classes', (req, res) => {
     res.json(db.classes);
 });
 
-// יצירת כיתה
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const { name, grade, teacherId } = req.body;
-    const user = req.session.user; // המשתמש המחובר
+    const user = req.session.user;
 
     let assignedTeacherId;
         
     if (user.role === 'admin') {
-        // מנהל: יכול להגדיר מורה אחר (או null)
         assignedTeacherId = parseInt(teacherId) || null;
     } else if (user.role === 'teacher') {
-        // מורה: חייב להיות מוגדר לעצמו. מתעלם מ-teacherId שהגיע ב-body.
         assignedTeacherId = user.id;
     } else {
-        // הרשאה נכשלה (למרות ה-middleware)
         return res.status(403).json({ message: 'אין לך הרשאה ליצור כיתה.' });
     }
     
@@ -444,7 +471,7 @@ app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
         id: getNextId(db.classes),
         name,
         grade,
-        teacherId: assignedTeacherId, // משתמש במזהה המורה שנקבע
+        teacherId: assignedTeacherId, 
         students: []
     };
     
@@ -453,7 +480,6 @@ app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     res.status(201).json(newClass);
 });
 
-// מחיקת כיתה
 app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
     
@@ -462,7 +488,6 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
         return res.status(404).json({ message: 'כיתה לא נמצאה.' });
     }
 
-    // בדיקת הרשאה: רק מנהל או המורה *המשויך* יכולים למחוק
     const aClass = db.classes[classIndex];
     if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
         return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
@@ -470,7 +495,6 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 
     db.classes.splice(classIndex, 1);
 
-    // הסרת השיוך מהתלמידים
     db.users.forEach(user => {
         if (user.role === 'student' && user.classIds) {
             user.classIds = user.classIds.filter(cid => cid !== classId);
@@ -482,10 +506,9 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 });
 
 
-// API להוספת תלמידים לכיתה
 app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
-    const { studentId } = req.body; // נצפה לקבל studentId
+    const { studentId } = req.body; 
     
     const aClass = db.classes.find(c => c.id === classId);
     
@@ -493,7 +516,6 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, r
         return res.status(404).json({ message: 'כיתה לא נמצאה.' });
     }
 
-    // בדיקת הרשאות: או מנהל, או המורה המשויך לכיתה
     if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
         return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
     }
@@ -504,11 +526,9 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, r
         return res.status(404).json({ message: 'תלמיד לא נמצא או שאינו תלמיד.' });
     }
     
-    // הוספה לכיתה חדשה
     if (!aClass.students.includes(student.id)) {
         aClass.students.push(student.id);
     }
-    // הוספה לרשימת הכיתות של התלמיד
     if (!student.classIds.includes(classId)) {
         student.classIds.push(classId);
     }
@@ -520,17 +540,16 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, r
 
 // Posts Management
 app.get('/api/posts', (req, res) => {
-    const user = req.session.user; // יכול להיות null
+    const user = req.session.user; 
     
     if (!user) {
         return res.json(db.posts.filter(p => !p.isPrivate));
     }
     
     if (user.role === 'admin') {
-        return res.json(db.posts); // מנהל רואה הכל
+        return res.json(db.posts); 
     }
     
-    // מורה ותלמיד רואים הודעות ציבוריות + הודעות כיתתיות
     const userClassIds = user.classIds || [];
     const filteredPosts = db.posts.filter(post => 
         !post.isPrivate || (post.isPrivate && userClassIds.includes(post.classId))
@@ -586,18 +605,16 @@ app.get('/api/assignments', (req, res) => {
     }
     
     if (user.role === 'admin') {
-        return res.json(db.assignments); // מנהל רואה הכל
+        return res.json(db.assignments); 
     }
     
     if (user.role === 'teacher') {
-        // מורה רואה משימות שהוא יצר
         const teacherAssignments = db.assignments.filter(a => a.teacherId === user.id);
         return res.json(teacherAssignments);
     }
     
     if (user.role === 'student') {
         const userClassIds = user.classIds || [];
-        // תלמיד רואה משימות של הכיתות שלו
         const studentAssignments = db.assignments.filter(a => userClassIds.includes(a.classId));
         return res.json(studentAssignments);
     }
@@ -627,13 +644,11 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, (req, res) => {
     res.status(201).json(newAssignment);
 });
 
-// נקודת קצה להגשת משימה
 app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), (req, res) => {
     const assignmentId = parseInt(req.params.id);
     const student = req.session.user;
     
     if (student.role !== 'student') {
-        // ודא שמחיקת הקובץ מתבצעת אם יש שגיאת הרשאה
         if (req.file) fs.unlinkSync(req.file.path); 
         return res.status(403).json({ message: 'רק תלמידים יכולים להגיש משימות.' });
     }
@@ -659,11 +674,10 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
     if (existingSubmissionIndex > -1) {
         const oldSubmission = assignment.submissions[existingSubmissionIndex];
         
-        // תיקון קריטי: מחיקת הקובץ הישן כדי למנוע דליפת קבצים
         if (oldSubmission.file && oldSubmission.file.path) {
             const oldFile = oldSubmission.file.path;
             if (fs.existsSync(oldFile)) {
-                fs.unlinkSync(oldFile); // מחיקת הקובץ הפיזי הישן
+                fs.unlinkSync(oldFile); 
             }
         }
         
@@ -691,7 +705,6 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, (req, res)
     if (user.role === 'admin' || assignment.teacherId === user.id) {
         try {
             assignment.submissions.forEach(sub => {
-                // בדיקה בטיחותית לפני מחיקת הקובץ
                 if (sub.file && sub.file.path && fs.existsSync(sub.file.path)) {
                     fs.unlinkSync(sub.file.path);
                 }
@@ -707,6 +720,7 @@ app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, (req, res)
         res.status(403).json({ message: 'אין לך הרשאה למחוק משימה זו.' });
     }
 });
+
 
 // --- הפעלת השרת ---
 app.listen(PORT, () => {
