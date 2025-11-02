@@ -68,6 +68,7 @@ async function getSequentialId(tableName, initialId = 1) {
         return (result.maxId || initialId) + 1;
     } catch (e) {
         console.error(`שגיאה בשליפת ID עבור ${tableName}:`, e);
+        // במקרה של שגיאה קריטית, נחזיר ID ראשוני כדי לא לקרוס
         return initialId;
     }
 }
@@ -161,15 +162,20 @@ async function setupDatabase() {
 
 const isAuthenticated = async (req, res, next) => {
     if (req.session.userId) {
-        const user = await db('users').where({ id: req.session.userId }).first();
-        
-        if (user) {
-            const userSession = { ...user };
-            delete userSession.password; 
-            req.session.user = userSession;
-            next();
-        } else {
-            req.session.destroy(() => res.status(401).json({ message: 'אינך מחובר. המשתמש לא נמצא.' }));
+        try {
+            const user = await db('users').where({ id: req.session.userId }).first();
+            
+            if (user) {
+                const userSession = { ...user };
+                delete userSession.password; 
+                req.session.user = userSession;
+                next();
+            } else {
+                req.session.destroy(() => res.status(401).json({ message: 'אינך מחובר. המשתמש לא נמצא.' }));
+            }
+        } catch (error) {
+             console.error("❌ שגיאת DB ב-isAuthenticated:", error); 
+             res.status(500).json({ message: 'שגיאת שרת פנימית.' });
         }
     } else {
         res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
@@ -198,17 +204,22 @@ const isAdminOrTeacher = (req, res, next) => {
 app.post('/api/login', async (req, res) => { 
     const { email, password } = req.body;
     
-    const user = await db('users').where({ email }).first();
-    
-    if (user && bcrypt.compareSync(password, user.password)) {
-        const userSession = { ...user };
-        delete userSession.password;
+    try {
+        const user = await db('users').where({ email }).first();
         
-        req.session.user = userSession;
-        req.session.userId = user.id; 
-        res.json(userSession);
-    } else {
-        res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
+        if (user && bcrypt.compareSync(password, user.password)) {
+            const userSession = { ...user };
+            delete userSession.password;
+            
+            req.session.user = userSession;
+            req.session.userId = user.id; 
+            res.json(userSession);
+        } else {
+            res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
+        }
+    } catch (error) {
+        console.error("❌ שגיאת DB ב-POST /api/login:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
 });
 
@@ -224,17 +235,22 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/me', async (req, res) => { 
     if (req.session.userId) {
-        const freshUser = await db('users').where({ id: req.session.userId }).first();
-        
-        if (freshUser) {
-            const userSession = { ...freshUser };
-            delete userSession.password;
-            req.session.user = userSession;
-            res.json(userSession);
-        } else {
-            req.session.destroy(() => {
-                res.json(null);
-            });
+        try {
+            const freshUser = await db('users').where({ id: req.session.userId }).first();
+            
+            if (freshUser) {
+                const userSession = { ...freshUser };
+                delete userSession.password;
+                req.session.user = userSession;
+                res.json(userSession);
+            } else {
+                req.session.destroy(() => {
+                    res.json(null);
+                });
+            }
+        } catch (error) {
+            console.error("❌ שגיאת DB ב-GET /api/me:", error); 
+            res.status(500).json({ message: 'שגיאת שרת פנימית.' });
         }
     } else {
         res.json(null);
@@ -245,42 +261,53 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
     const { fullname, email, password } = req.body;
     const userId = req.session.user.id;
     
-    const user = await db('users').where({ id: userId }).first();
+    try {
+        const user = await db('users').where({ id: userId }).first();
 
-    if (!user) {
-        return res.status(404).json({ message: 'משתמש לא נמצא.' });
-    }
-    
-    // הגנה על המשתמש הראשי
-    if (user.email === 'yairfrish2@gmail.com' && email !== 'yairfrish2@gmail.com') {
-         return res.status(403).json({ message: 'לא ניתן לשנות את האימייל של משתמש זה.' });
-    }
+        if (!user) {
+            return res.status(404).json({ message: 'משתמש לא נמצא.' });
+        }
+        
+        // הגנה על המשתמש הראשי
+        if (user.email === 'yairfrish2@gmail.com' && email !== 'yairfrish2@gmail.com') {
+             return res.status(403).json({ message: 'לא ניתן לשנות את האימייל של משתמש זה.' });
+        }
 
-    // בדיקה אם האימייל החדש תפוס
-    if (email !== user.email && await db('users').where({ email }).whereNot({ id: userId }).first()) {
-        return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
-    }
-    
-    const updateData = {};
-    if (fullname) updateData.fullname = fullname;
-    if (email) updateData.email = email;
-    if (password) updateData.password = bcrypt.hashSync(password, saltRounds);
+        // בדיקה אם האימייל החדש תפוס
+        if (email !== user.email && await db('users').where({ email }).whereNot({ id: userId }).first()) {
+            return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+        }
+        
+        const updateData = {};
+        if (fullname) updateData.fullname = fullname;
+        if (email) updateData.email = email;
+        if (password) updateData.password = bcrypt.hashSync(password, saltRounds);
 
-    await db('users').where({ id: userId }).update(updateData);
-    
-    const updatedUser = await db('users').where({ id: userId }).first();
-    
-    const userSession = { ...updatedUser };
-    delete userSession.password;
-    req.session.user = userSession; 
-    
-    res.json(userSession);
+        await db('users').where({ id: userId }).update(updateData);
+        
+        const updatedUser = await db('users').where({ id: userId }).first();
+        
+        const userSession = { ...updatedUser };
+        delete userSession.password;
+        req.session.user = userSession; 
+        
+        res.json(userSession);
+    } catch (error) {
+        console.error("❌ שגיאת DB ב-PUT /api/profile:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 // Users Management (Admin)
 app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
-    const safeUsers = await db('users').select('id', 'fullname', 'email', 'role', 'classIds');
-    res.json(safeUsers);
+    try {
+        // *** בלוק ה-try/catch שהוספנו לבדיקה ***
+        const safeUsers = await db('users').select('id', 'fullname', 'email', 'role', 'classIds');
+        res.json(safeUsers);
+    } catch (error) {
+        console.error("❌ שגיאת DB קריטית ב-GET /api/users:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => { 
@@ -290,16 +317,16 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
         return res.status(400).json({ message: 'חסרים שדות חובה.' });
     }
     
-    // בדיקת קיום אימייל
-    if (await db('users').where({ email }).first()) {
-        return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
-    }
-    
-    const studentClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
-    
-    const hashedPassword = bcrypt.hashSync(password, saltRounds);
-
     try {
+        // בדיקת קיום אימייל
+        if (await db('users').where({ email }).first()) {
+            return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+        }
+        
+        const studentClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
+        
+        const hashedPassword = bcrypt.hashSync(password, saltRounds);
+
         const [newUserId] = await db('users').insert({
             fullname,
             email,
@@ -320,7 +347,7 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
         const { password: pw, ...safeUser } = newUser;
         res.status(201).json(safeUser);
     } catch (error) {
-        console.error("שגיאה ביצירת משתמש:", error);
+        console.error("❌ שגיאה ביצירת משתמש:", error);
         res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
 });
@@ -329,130 +356,155 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
 app.put('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { 
     const userId = parseInt(req.params.id);
     let { fullname, email, role, classIds, password } = req.body;
+    
+    try {
+        const user = await db('users').where({ id: userId }).first();
+        if (!user) {
+            return res.status(404).json({ message: 'משתמש לא נמצא.' });
+        }
+        
+        // הגנה על משתמש
+        if (user.email === 'yairfrish2@gmail.com') {
+            return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
+        }
 
-    const user = await db('users').where({ id: userId }).first();
-    if (!user) {
-        return res.status(404).json({ message: 'משתמש לא נמצא.' });
-    }
-    
-    // הגנה על משתמש
-    if (user.email === 'yairfrish2@gmail.com') {
-        return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
-    }
+        // בדיקת אימייל (אם השתנה)
+        if (email !== user.email && await db('users').where({ email }).whereNot({ id: userId }).first()) {
+             return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
+        }
+        
+        const newClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
+        const updateData = {};
+        if (fullname) updateData.fullname = fullname;
+        if (email) updateData.email = email;
+        if (role) updateData.role = role;
+        if (classIds) updateData.classIds = newClassIds;
+        if (password) updateData.password = bcrypt.hashSync(password, saltRounds);
 
-    // בדיקת אימייל (אם השתנה)
-    if (email !== user.email && await db('users').where({ email }).whereNot({ id: userId }).first()) {
-         return res.status(400).json({ message: 'אימייל זה כבר קיים במערכת.' });
-    }
-    
-    const newClassIds = (role === 'student' && classIds) ? classIds.map(Number) : [];
-    const updateData = {};
-    if (fullname) updateData.fullname = fullname;
-    if (email) updateData.email = email;
-    if (role) updateData.role = role;
-    if (classIds) updateData.classIds = newClassIds;
-    if (password) updateData.password = bcrypt.hashSync(password, saltRounds);
+        const oldClassIds = user.classIds || [];
+        const added = newClassIds.filter(id => !oldClassIds.includes(id));
+        const removed = oldClassIds.filter(id => !newClassIds.includes(id));
 
-    const oldClassIds = user.classIds || [];
-    const added = newClassIds.filter(id => !oldClassIds.includes(id));
-    const removed = oldClassIds.filter(id => !newClassIds.includes(id));
-
-    // טיפול ב-Postgres: הוספה והסרה מהמערכים בטבלת classes
-    if (added.length > 0) {
-        await db('classes')
-            .whereIn('id', added)
-            .update({ students: db.raw('array_append(students, ?)', [userId]) });
+        // טיפול ב-Postgres: הוספה והסרה מהמערכים בטבלת classes
+        if (added.length > 0) {
+            await db('classes')
+                .whereIn('id', added)
+                .update({ students: db.raw('array_append(students, ?)', [userId]) });
+        }
+        if (removed.length > 0) {
+            await db('classes')
+                .whereIn('id', removed)
+                .update({ students: db.raw('array_remove(students, ?)', [userId]) });
+        }
+        
+        // עדכון פרטי משתמש
+        await db('users').where({ id: userId }).update(updateData);
+        
+        const updatedUser = await db('users').where({ id: userId }).first();
+        
+        const { password: pw, ...safeUser } = updatedUser;
+        res.json(safeUser);
+    } catch (error) {
+        console.error("❌ שגיאה בעריכת משתמש:", error);
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-    if (removed.length > 0) {
-        await db('classes')
-            .whereIn('id', removed)
-            .update({ students: db.raw('array_remove(students, ?)', [userId]) });
-    }
-    
-    // עדכון פרטי משתמש
-    await db('users').where({ id: userId }).update(updateData);
-    
-    const updatedUser = await db('users').where({ id: userId }).first();
-    
-    const { password: pw, ...safeUser } = updatedUser;
-    res.json(safeUser);
 });
 
 
 app.delete('/api/users/:id', isAuthenticated, isAdmin, async (req, res) => { 
     const userId = parseInt(req.params.id);
     
-    const user = await db('users').where({ id: userId }).first();
-    if (!user) {
-        return res.status(404).json({ message: 'משתמש לא נמצא.' });
+    try {
+        const user = await db('users').where({ id: userId }).first();
+        if (!user) {
+            return res.status(404).json({ message: 'משתמש לא נמצא.' });
+        }
+        
+        // הגנה על משתמש
+        if (user.email === 'yairfrish2@gmail.com') {
+            return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
+        }
+        
+        // הסרת שיוך מהכיתות לפני המחיקה
+        if (user.role === 'student' && user.classIds && user.classIds.length > 0) {
+            await db('classes')
+                .whereIn('id', user.classIds)
+                .update({ students: db.raw('array_remove(students, ?)', [userId]) });
+        }
+        
+        // מחיקת המשתמש
+        await db('users').where({ id: userId }).del();
+        
+        res.json({ message: 'המשתמש נמחק בהצלחה.' });
+    } catch (error) {
+        console.error("❌ שגיאה במחיקת משתמש:", error);
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-    
-    // הגנה על משתמש
-    if (user.email === 'yairfrish2@gmail.com') {
-        return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
-    }
-    
-    // הסרת שיוך מהכיתות לפני המחיקה
-    if (user.role === 'student' && user.classIds && user.classIds.length > 0) {
-        await db('classes')
-            .whereIn('id', user.classIds)
-            .update({ students: db.raw('array_remove(students, ?)', [userId]) });
-    }
-    
-    // מחיקת המשתמש
-    await db('users').where({ id: userId }).del();
-    
-    res.json({ message: 'המשתמש נמחק בהצלחה.' });
 });
 
 // Classes Management
 app.get('/api/classes', isAuthenticated, async (req, res) => { 
-    const classes = await db('classes').select('*');
-    res.json(classes);
+    try {
+        const classes = await db('classes').select('*');
+        res.json(classes);
+    } catch (error) {
+        console.error("❌ שגיאת DB ב-GET /api/classes:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { name, grade, teacherId } = req.body;
     
-    const nextId = await getSequentialId('classes', 101); 
+    try {
+        const nextId = await getSequentialId('classes', 101); 
 
-    const [newClass] = await db('classes').insert({
-        id: nextId,
-        name,
-        grade,
-        teacherId: parseInt(teacherId) || null,
-        students: [] 
-    }).returning('*');
+        const [newClass] = await db('classes').insert({
+            id: nextId,
+            name,
+            grade,
+            teacherId: parseInt(teacherId) || null,
+            students: [] 
+        }).returning('*');
 
-    res.status(201).json(newClass);
+        res.status(201).json(newClass);
+    } catch (error) {
+        console.error("❌ שגיאה ביצירת כיתה:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 // מחיקת כיתה
 app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const classId = parseInt(req.params.id);
     const user = req.session.user;
+    
+    try {
+        const aClass = await db('classes').where({ id: classId }).first();
+        if (!aClass) {
+            return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+        }
 
-    const aClass = await db('classes').where({ id: classId }).first();
-    if (!aClass) {
-        return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+        // בדיקת הרשאות
+        if (user.role !== 'admin' && aClass.teacherId !== user.id) {
+            return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
+        }
+
+        // הסרת השיוך מהתלמידים (עדכון טבלת users)
+        await db('users')
+            .whereRaw('? = ANY("classIds")', [classId]) 
+            .update({ classIds: db.raw('array_remove("classIds", ?)', [classId]) });
+
+        // מחיקת הכיתה, כל הפוסטים והמטלות המשויכות
+        await db('classes').where({ id: classId }).del();
+        await db('posts').where({ classId: classId }).del();
+        await db('assignments').where({ classId: classId }).del();
+
+        res.json({ message: 'הכיתה, הפוסטים והמטלות נמחקו בהצלחה.' });
+    } catch (error) {
+        console.error("❌ שגיאה במחיקת כיתה:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-
-    // בדיקת הרשאות
-    if (user.role !== 'admin' && aClass.teacherId !== user.id) {
-        return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
-    }
-
-    // הסרת השיוך מהתלמידים (עדכון טבלת users)
-    await db('users')
-        .whereRaw('? = ANY("classIds")', [classId]) 
-        .update({ classIds: db.raw('array_remove("classIds", ?)', [classId]) });
-
-    // מחיקת הכיתה, כל הפוסטים והמטלות המשויכות
-    await db('classes').where({ id: classId }).del();
-    await db('posts').where({ classId: classId }).del();
-    await db('assignments').where({ classId: classId }).del();
-
-    res.json({ message: 'הכיתה, הפוסטים והמטלות נמחקו בהצלחה.' });
 });
 
 // הוספת תלמידים לכיתה
@@ -460,39 +512,44 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (
     const classId = parseInt(req.params.id);
     const { studentId } = req.body; 
     
-    const aClass = await db('classes').where({ id: classId }).first();
-    
-    if (!aClass) {
-        return res.status(404).json({ message: 'כיתה לא נמצאה.' });
-    }
+    try {
+        const aClass = await db('classes').where({ id: classId }).first();
+        
+        if (!aClass) {
+            return res.status(404).json({ message: 'כיתה לא נמצאה.' });
+        }
 
-    // בדיקת הרשאות
-    if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
-        return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
-    }
+        // בדיקת הרשאות
+        if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
+            return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
+        }
 
-    const student = await db('users').where({ id: parseInt(studentId), role: 'student' }).first();
-    
-    if (!student) {
-        return res.status(404).json({ message: 'תלמיד לא נמצא או שאינו תלמיד.' });
+        const student = await db('users').where({ id: parseInt(studentId), role: 'student' }).first();
+        
+        if (!student) {
+            return res.status(404).json({ message: 'תלמיד לא נמצא או שאינו תלמיד.' });
+        }
+        
+        // הוספה לכיתה: רק אם התלמיד לא קיים כבר ברשימה
+        if (!aClass.students.includes(student.id)) {
+            await db('classes')
+                .where({ id: classId })
+                .update({ students: db.raw('array_append(students, ?)', [student.id]) });
+        }
+        
+        // הוספה לרשימת הכיתות של התלמיד: רק אם הכיתה לא קיימת כבר ברשימה
+        if (!student.classIds.includes(classId)) {
+            await db('users')
+                .where({ id: student.id })
+                .update({ classIds: db.raw('array_append("classIds", ?)', [classId]) });
+        }
+        
+        const updatedClass = await db('classes').where({ id: classId }).first();
+        res.json(updatedClass);
+    } catch (error) {
+        console.error("❌ שגיאה בהוספת תלמיד לכיתה:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-    
-    // הוספה לכיתה: רק אם התלמיד לא קיים כבר ברשימה
-    if (!aClass.students.includes(student.id)) {
-        await db('classes')
-            .where({ id: classId })
-            .update({ students: db.raw('array_append(students, ?)', [student.id]) });
-    }
-    
-    // הוספה לרשימת הכיתות של התלמיד: רק אם הכיתה לא קיימת כבר ברשימה
-    if (!student.classIds.includes(classId)) {
-        await db('users')
-            .where({ id: student.id })
-            .update({ classIds: db.raw('array_append("classIds", ?)', [classId]) });
-    }
-    
-    const updatedClass = await db('classes').where({ id: classId }).first();
-    res.json(updatedClass);
 });
 
 
@@ -500,55 +557,70 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, async (
 app.get('/api/posts', isAuthenticated, async (req, res) => { 
     const user = req.session.user; 
     
-    let query = db('posts').select('*').orderBy('date', 'desc');
+    try {
+        let query = db('posts').select('*').orderBy('date', 'desc');
 
-    if (!user) {
-        query = query.where({ isPrivate: false });
-    } else if (user.role === 'admin') {
-        // מנהל רואה הכל
-    } else {
-        // מורה ותלמיד רואים ציבוריות + כיתתיות שלהם
-        const userClassIds = user.classIds || [];
-        query = query.where({ isPrivate: false }).orWhereIn('classId', userClassIds);
+        if (!user) {
+            query = query.where({ isPrivate: false });
+        } else if (user.role === 'admin') {
+            // מנהל רואה הכל
+        } else {
+            // מורה ותלמיד רואים ציבוריות + כיתתיות שלהם
+            const userClassIds = user.classIds || [];
+            query = query.where({ isPrivate: false }).orWhereIn('classId', userClassIds);
+        }
+        
+        const filteredPosts = await query;
+        res.json(filteredPosts);
+    } catch (error) {
+        console.error("❌ שגיאת DB ב-GET /api/posts:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-    
-    const filteredPosts = await query;
-    res.json(filteredPosts);
 });
 
 app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const { title, content, isPrivate, classId } = req.body;
     const author = req.session.user;
     
-    const nextId = await getSequentialId('posts'); 
+    try {
+        const nextId = await getSequentialId('posts'); 
 
-    const [newPost] = await db('posts').insert({
-        id: nextId,
-        title,
-        content,
-        authorId: author.id,
-        authorName: author.fullname,
-        isPrivate: !!isPrivate,
-        classId: isPrivate ? (parseInt(classId) || null) : null
-    }).returning('*');
+        const [newPost] = await db('posts').insert({
+            id: nextId,
+            title,
+            content,
+            authorId: author.id,
+            authorName: author.fullname,
+            isPrivate: !!isPrivate,
+            classId: isPrivate ? (parseInt(classId) || null) : null
+        }).returning('*');
 
-    res.status(201).json(newPost);
+        res.status(201).json(newPost);
+    } catch (error) {
+        console.error("❌ שגיאה ביצירת פוסט:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const postId = parseInt(req.params.id);
     const user = req.session.user;
     
-    const post = await db('posts').where({ id: postId }).first();
-    if (!post) {
-        return res.status(404).json({ message: 'הודעה לא נמצאה.' });
-    }
-    
-    if (user.role === 'admin' || post.authorId === user.id) {
-        await db('posts').where({ id: postId }).del();
-        res.json({ message: 'ההודעה נמחקה.' });
-    } else {
-        res.status(403).json({ message: 'אין לך הרשאה למחוק הודעה זו.' });
+    try {
+        const post = await db('posts').where({ id: postId }).first();
+        if (!post) {
+            return res.status(404).json({ message: 'הודעה לא נמצאה.' });
+        }
+        
+        if (user.role === 'admin' || post.authorId === user.id) {
+            await db('posts').where({ id: postId }).del();
+            res.json({ message: 'ההודעה נמחקה.' });
+        } else {
+            res.status(403).json({ message: 'אין לך הרשאה למחוק הודעה זו.' });
+        }
+    } catch (error) {
+        console.error("❌ שגיאה במחיקת פוסט:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
 });
 
@@ -556,22 +628,27 @@ app.delete('/api/posts/:id', isAuthenticated, isAdminOrTeacher, async (req, res)
 app.get('/api/assignments', isAuthenticated, async (req, res) => { 
     const user = req.session.user;
     
-    if (user.role === 'admin') {
-        return res.json(await db('assignments').select('*'));
+    try {
+        if (user.role === 'admin') {
+            return res.json(await db('assignments').select('*'));
+        }
+        
+        if (user.role === 'teacher') {
+            const teacherAssignments = await db('assignments').where({ teacherId: user.id }).select('*');
+            return res.json(teacherAssignments);
+        }
+        
+        if (user.role === 'student') {
+            const userClassIds = user.classIds || [];
+            const studentAssignments = await db('assignments').whereIn('classId', userClassIds).select('*');
+            return res.json(studentAssignments);
+        }
+        
+        res.json([]);
+    } catch (error) {
+        console.error("❌ שגיאת DB ב-GET /api/assignments:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
-    
-    if (user.role === 'teacher') {
-        const teacherAssignments = await db('assignments').where({ teacherId: user.id }).select('*');
-        return res.json(teacherAssignments);
-    }
-    
-    if (user.role === 'student') {
-        const userClassIds = user.classIds || [];
-        const studentAssignments = await db('assignments').whereIn('classId', userClassIds).select('*');
-        return res.json(studentAssignments);
-    }
-    
-    res.json([]);
 });
 
 app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
@@ -582,20 +659,25 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
         return res.status(400).json({ message: 'חובה לבחור כיתת יעד.' });
     }
     
-    const nextId = await getSequentialId('assignments'); 
+    try {
+        const nextId = await getSequentialId('assignments'); 
 
-    const [newAssignment] = await db('assignments').insert({
-        id: nextId,
-        title,
-        description,
-        dueDate,
-        teacherId: teacher.id,
-        teacherName: teacher.fullname,
-        classId: parseInt(classId),
-        submissions: []
-    }).returning('*');
-    
-    res.status(201).json(newAssignment);
+        const [newAssignment] = await db('assignments').insert({
+            id: nextId,
+            title,
+            description,
+            dueDate,
+            teacherId: teacher.id,
+            teacherName: teacher.fullname,
+            classId: parseInt(classId),
+            submissions: []
+        }).returning('*');
+        
+        res.status(201).json(newAssignment);
+    } catch (error) {
+        console.error("❌ שגיאה ביצירת משימה:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
+    }
 });
 
 app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), async (req, res) => { 
@@ -607,69 +689,80 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
         return res.status(403).json({ message: 'רק תלמידים יכולים להגיש משימות.' });
     }
     
-    const assignment = await db('assignments').where({ id: assignmentId }).first();
-    if (!assignment) {
-        if (req.file) fs.unlinkSync(req.file.path);
-        return res.status(404).json({ message: 'משימה לא נמצאה.' });
-    }
-    
-    if (!req.file) {
-        return res.status(400).json({ message: 'לא נבחר קובץ להגשה.' });
-    }
-
-    let submissions = assignment.submissions || [];
-    
-    const newSubmission = {
-        studentId: student.id,
-        studentName: student.fullname,
-        file: req.file, 
-        date: new Date()
-    };
-    
-    const existingSubmissionIndex = submissions.findIndex(s => s.studentId === student.id);
-    if (existingSubmissionIndex > -1) {
-        const oldFile = submissions[existingSubmissionIndex].file.path;
-        if (fs.existsSync(oldFile)) {
-            fs.unlinkSync(oldFile);
+    try {
+        const assignment = await db('assignments').where({ id: assignmentId }).first();
+        if (!assignment) {
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(404).json({ message: 'משימה לא נמצאה.' });
         }
-        submissions[existingSubmissionIndex] = newSubmission;
-    } else {
-        submissions.push(newSubmission);
-    }
-    
-    // --- עדכון submissions ב-DB ---
-    await db('assignments').where({ id: assignmentId }).update({ submissions: submissions });
+        
+        if (!req.file) {
+            return res.status(400).json({ message: 'לא נבחר קובץ להגשה.' });
+        }
 
-    res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
+        let submissions = assignment.submissions || [];
+        
+        const newSubmission = {
+            studentId: student.id,
+            studentName: student.fullname,
+            file: req.file, 
+            date: new Date()
+        };
+        
+        const existingSubmissionIndex = submissions.findIndex(s => s.studentId === student.id);
+        if (existingSubmissionIndex > -1) {
+            const oldFile = submissions[existingSubmissionIndex].file.path;
+            if (fs.existsSync(oldFile)) {
+                fs.unlinkSync(oldFile);
+            }
+            submissions[existingSubmissionIndex] = newSubmission;
+        } else {
+            submissions.push(newSubmission);
+        }
+        
+        // --- עדכון submissions ב-DB ---
+        await db('assignments').where({ id: assignmentId }).update({ submissions: submissions });
+
+        res.json({ message: `המשימה הוגשה בהצלחה: ${req.file.filename}` });
+    } catch (error) {
+        console.error("❌ שגיאה בהגשת משימה:", error); 
+        if (req.file) fs.unlinkSync(req.file.path); // מחיקת הקובץ אם ה-DB קרס
+        res.status(500).json({ message: 'שגיאת שרת פנימית בהגשה.' });
+    }
 });
 
 app.delete('/api/assignments/:id', isAuthenticated, isAdminOrTeacher, async (req, res) => { 
     const assignmentId = parseInt(req.params.id);
     const user = req.session.user;
+    
+    try {
+        const assignment = await db('assignments').where({ id: assignmentId }).first();
 
-    const assignment = await db('assignments').where({ id: assignmentId }).first();
-
-    if (!assignment) {
-        return res.status(404).json({ message: 'משימה לא נמצאה.' });
-    }
-
-    if (user.role === 'admin' || assignment.teacherId === user.id) {
-        try {
-            // מחיקת קבצים
-            (assignment.submissions || []).forEach(sub => {
-                if (sub.file && fs.existsSync(sub.file.path)) {
-                    fs.unlinkSync(sub.file.path);
-                }
-            });
-        } catch (err) {
-            console.error("שגיאה במחיקת קבצי הגשה:", err);
+        if (!assignment) {
+            return res.status(404).json({ message: 'משימה לא נמצאה.' });
         }
-        
-        // מחיקת המטלה
-        await db('assignments').where({ id: assignmentId }).del();
-        res.json({ message: 'המשימה וכל הגשותיה נמחקו בהצלחה.' });
-    } else {
-        res.status(403).json({ message: 'אין לך הרשאה למחוק משימה זו.' });
+
+        if (user.role === 'admin' || assignment.teacherId === user.id) {
+            try {
+                // מחיקת קבצים
+                (assignment.submissions || []).forEach(sub => {
+                    if (sub.file && fs.existsSync(sub.file.path)) {
+                        fs.unlinkSync(sub.file.path);
+                    }
+                });
+            } catch (err) {
+                console.error("שגיאה במחיקת קבצי הגשה:", err);
+            }
+            
+            // מחיקת המטלה
+            await db('assignments').where({ id: assignmentId }).del();
+            res.json({ message: 'המשימה וכל הגשותיה נמחקו בהצלחה.' });
+        } else {
+            res.status(403).json({ message: 'אין לך הרשאה למחוק משימה זו.' });
+        }
+    } catch (error) {
+        console.error("❌ שגיאה במחיקת משימה:", error); 
+        res.status(500).json({ message: 'שגיאת שרת פנימית.' });
     }
 });
 
@@ -686,7 +779,8 @@ app.listen(PORT, async () => {
         console.log(`🔑 עמוד התחברות: http://localhost:${PORT}/login.html`);
         console.log(`🏠 עמוד ראשי: http://localhost:${PORT}/index.html`);
     } catch (error) {
-        console.error("❌ שגיאה בחיבור ל-DB או בהפעלת השרת:", error);
+        // Log זה קריטי! הוא יציג את ה-SSL/TLS required ביומן השרת.
+        console.error("❌ שגיאה בחיבור ל-DB או בהפעלת השרת:", error); 
         process.exit(1);
     }
 });
