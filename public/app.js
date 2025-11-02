@@ -58,7 +58,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 <button class="btn-danger" id="logout-btn">🚪 התנתקות</button>
             `;
         } else {
-            // (חדש) שינוי שם
             headerTitleEl.innerHTML = `בית ספר "פרחי אהרון"`;
             authControlsEl.innerHTML = `
                 <a href="login.html" class="btn-primary">🔒 התחברות</a>
@@ -73,23 +72,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!currentUser) {
             navLinks = `<button class="nav-btn active" data-view="publicPosts">📢 הודעות כלליות</button>`;
         } else {
-            // קישורים בסיסיים לכל המחוברים
             navLinks = `
                 <button class="nav-btn" data-view="dashboard">📊 לוח מחוונים</button>
                 <button class="nav-btn" data-view="posts">📢 הודעות וחדשות</button>
                 <button class="nav-btn" data-view="assignments">📝 משימות</button>
             `;
             
-            // (חדש) גם מנהל יכול לנהל משימות
+            // (חדש) ניווט מבוסס הרשאות
             if (currentUser.role === 'teacher' || currentUser.role === 'admin') {
                 navLinks += `<button class="nav-btn" data-view="createAssignment">➕ ניהול משימות</button>`;
+                navLinks += `<button class="nav-btn" data-view="classes">🏫 ניהול כיתות</button>`;
             }
             
             if (currentUser.role === 'admin') {
-                navLinks += `
-                    <button class="nav-btn" data-view="users">👥 ניהול משתמשים</button>
-                    <button class="nav-btn" data-view="classes">🏫 ניהול כיתות</button>
-                `;
+                navLinks += `<button class="nav-btn" data-view="users">👥 ניהול משתמשים</button>`;
+            }
+            
+            if (currentUser.role === 'teacher') {
+                // (חדש) מורה מקבל קישור לניהול תלמידים
+                navLinks += `<button class="nav-btn" data-view="users">👥 ניהול תלמידים</button>`;
             }
         }
         
@@ -126,14 +127,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function loadView(viewName) {
-        // עדכון כפתור פעיל
         document.querySelectorAll('.app-nav .nav-btn, .header-user .nav-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.view === viewName);
         });
 
-        // בדיקת הרשאות בסיסית
         if (!state.currentUser && !['publicPosts', 'dashboard'].includes(viewName)) {
-            return loadView('publicPosts'); // אם לא מחובר, הפנה לעמוד ציבורי
+            return loadView('publicPosts'); 
         }
 
         switch (viewName) {
@@ -177,11 +176,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function loadDashboard() {
         if (!state.currentUser) {
-            return loadView('publicPosts'); // אם לא מחובר, הצג הודעות כלליות
+            return loadView('publicPosts'); 
         }
 
         let classInfo = '';
-        // (חדש) תמיכה בריבוי כיתות
         if (state.currentUser.role === 'student') {
             const classNames = state.currentUser.classIds ? state.currentUser.classIds.join(', ') : 'אין';
             classInfo = `<h3>🎒 כיתות משויכות: ${classNames || 'אין'}</h3>`;
@@ -239,21 +237,41 @@ document.addEventListener('DOMContentLoaded', () => {
         const canPost = state.currentUser.role === 'admin' || state.currentUser.role === 'teacher';
         
         try {
-            const res = await fetch('/api/posts');
-            const posts = await res.json();
+            // (חדש) טעינת הודעות וכיתות (עבור טופס הוספה)
+            const [postsRes, classesRes] = await Promise.all([
+                fetch('/api/posts'),
+                canPost ? fetch('/api/classes') : Promise.resolve(null) // טען כיתות רק אם צריך
+            ]);
             
+            const posts = await postsRes.json();
+            if (classesRes) {
+                state.classes = await classesRes.json();
+            }
+
+            // (חדש) יצירת אפשרויות בחירה לכיתות
+            const classOptions = canPost 
+                ? state.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join('')
+                : '';
+
             const postsHtml = posts.length > 0
-                ? posts.map(post => `
-                    <article class="item-card">
-                        <div class="item-header">
-                            <h3>📝 ${post.title} ${post.isPrivate ? `(🏫 כיתה ${post.classId})` : '(כללי)'}</h3>
-                            ${state.currentUser.role === 'admin' || state.currentUser.id === post.authorId ?
-                            `<button class="btn-danger btn-small" data-action="delete-post" data-id="${post.id}">🗑️ מחק</button>` : ''}
-                        </div>
-                        <p>${post.content}</p>
-                        <small>👤 פורסם על ידי ${post.authorName} 📅 ${new Date(post.date).toLocaleDateString('he-IL')}</small>
-                    </article>
-                `).join('')
+                ? posts.map(post => {
+                    // (חדש) תצוגת כיתות מרובות
+                    let target = '(כללי)';
+                    if (post.isPrivate) {
+                        target = `(🏫 כיתות: ${post.classIds.join(', ') || 'לא צוין'})`;
+                    }
+                    return `
+                        <article class="item-card">
+                            <div class="item-header">
+                                <h3>📝 ${post.title} ${target}</h3>
+                                ${state.currentUser.role === 'admin' || state.currentUser.id === post.authorId ?
+                                `<button class="btn-danger btn-small" data-action="delete-post" data-id="${post.id}">🗑️ מחק</button>` : ''}
+                            </div>
+                            <p>${post.content}</p>
+                            <small>👤 פורסם על ידי ${post.authorName} 📅 ${new Date(post.date).toLocaleDateString('he-IL')}</small>
+                        </article>
+                    `;
+                }).join('')
                 : '<p>אין הודעות להצגה.</p>';
 
             render(`
@@ -275,6 +293,15 @@ document.addEventListener('DOMContentLoaded', () => {
                                 <input type="checkbox" id="post-isPrivate">
                                 <label for="post-isPrivate">הודעה כיתתית?</label>
                             </div>
+                            
+                            <div class="form-group" id="post-class-selector" style="display:none; grid-column: 1 / -1;">
+                                <label for="post-classIds">בחר כיתות (החזק Ctrl/Cmd לבחירה מרובה):</label>
+                                <select id="post-classIds" multiple size="5">
+                                    ${classOptions}
+                                </select>
+                                <button type="button" class="btn-primary btn-small" data-action="select-all-classes" style="margin-top: 5px;">בחר הכל</button>
+                            </div>
+                            
                             <button type="submit">➕ פרסם הודעה</button>
                         </form>
                     ` : ''}
@@ -283,7 +310,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </section>
             `);
+
+            // (חדש) הוספת מאזין לאירוע לתיבת הסימון
+            if (canPost) {
+                const privateCheckbox = document.getElementById('post-isPrivate');
+                const classSelector = document.getElementById('post-class-selector');
+                privateCheckbox.addEventListener('change', (e) => {
+                    classSelector.style.display = e.target.checked ? 'block' : 'none';
+                });
+            }
+
         } catch (error) {
+            console.error(error);
             renderError('טעינת ההודעות נכשלה.');
         }
     }
@@ -296,12 +334,11 @@ document.addEventListener('DOMContentLoaded', () => {
         
         try {
             const res = await fetch('/api/assignments');
-            state.assignments = await res.json(); // שמירה בסטייט
+            state.assignments = await res.json(); 
             
             const assignmentsHtml = state.assignments.length > 0
                 ? state.assignments.map(a => {
                     
-                    // (חדש) בניית HTML נפרד להגשות
                     let submissionHtml = '';
                     if (isStudent) {
                         submissionHtml = `
@@ -314,7 +351,6 @@ document.addEventListener('DOMContentLoaded', () => {
                             </form>
                         `;
                     } else if (canManage) {
-                        // (חדש) תצוגת הגשות למורה/מנהל
                         submissionHtml = `
                             <h4>הגשות תלמידים (${a.submissions.length}):</h4>
                             ${a.submissions.length > 0 ? `
@@ -412,15 +448,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const classOptions = state.classes.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
 
+            // (חדש) מורים יכולים לראות רק תלמידים בטופס העריכה
+            const isTeacher = state.currentUser.role === 'teacher';
+            const roleOptions = isTeacher
+                ? '<option value="student">תלמיד</option>'
+                : `
+                    <option value="student">תלמיד</option>
+                    <option value="teacher">מורה</option>
+                    <option value="admin">מנהל</option>
+                  `;
+
             const usersHtml = state.users.map(user => {
-                // (חדש) טיפול במשתמש מוגן + כפתור עריכה
                 const protectedUser = user.email === 'yairfrish2@gmail.com';
-                const actionsHtml = protectedUser
-                    ? '<span>(משתמש מוגן)</span>'
-                    : `
+                
+                // (חדש) מורים לא יכולים למחוק, רק לערוך (שיוך כיתות)
+                let actionsHtml = '';
+                if (protectedUser) {
+                    actionsHtml = '<span>(משתמש מוגן)</span>';
+                } else if (isTeacher) {
+                    // מורה: רק עריכה
+                    actionsHtml = `<button class="btn-primary btn-small" data-action="show-edit-user-form" data-id="${user.id}" data-user='${JSON.stringify(user)}'>✏️ ערוך שיוך כיתות</button>`;
+                } else {
+                    // מנהל: עריכה ומחיקה
+                    actionsHtml = `
                         <button class="btn-primary btn-small" data-action="show-edit-user-form" data-id="${user.id}" data-user='${JSON.stringify(user)}'>✏️ ערוך</button>
                         <button class="btn-danger btn-small" data-action="delete-user" data-id="${user.id}">🗑️ מחק</button>
                     `;
+                }
                 
                 return `
                     <tr>
@@ -435,8 +489,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             render(`
                 <section class="view">
-                    <h2>👥 ניהול משתמשים</h2>
-                    <button class="btn-primary" data-action="show-add-user-form">➕ הוסף משתמש חדש</button>
+                    <h2>${isTeacher ? '👥 ניהול תלמידים' : '👥 ניהול משתמשים'}</h2>
+                    
+                    ${!isTeacher ? `
+                        <button class="btn-primary" data-action="show-add-user-form">➕ הוסף משתמש חדש</button>
+                    ` : ''}
                     
                     <form id="add-user-form" class="form-grid" style="display:none;">
                         <h3>יצירת משתמש חדש</h3>
@@ -455,9 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="form-group">
                             <label for="user-role">תפקיד:</label>
                             <select id="user-role" required>
-                                <option value="student">תלמיד</option>
-                                <option value="teacher">מורה</option>
-                                <option value="admin">מנהל</option>
+                                ${roleOptions}
                             </select>
                         </div>
                         <div class="form-group" id="user-class-group">
@@ -487,9 +542,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="form-group">
                             <label for="edit-user-role">תפקיד:</label>
                             <select id="edit-user-role" required>
-                                <option value="student">תלמיד</option>
-                                <option value="teacher">מורה</option>
-                                <option value="admin">מנהל</option>
+                                ${roleOptions}
                             </select>
                         </div>
                         <div class="form-group" id="edit-user-class-group">
@@ -530,7 +583,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const [classesRes, usersRes] = await Promise.all([
                 fetch('/api/classes'),
-                fetch('/api/users') // נדרש לשמות המורים
+                fetch('/api/users') 
             ]);
             state.classes = await classesRes.json();
             state.users = await usersRes.json();
@@ -540,11 +593,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const classesHtml = state.classes.map(c => {
                 const teacher = state.users.find(u => u.id === c.teacherId);
+                // (חדש) בדיקה אם המורה הנוכחי יכול למחוק
+                const canDelete = state.currentUser.role === 'admin' || state.currentUser.id === c.teacherId;
                 return `
                     <article class="item-card">
                         <div class="item-header">
                             <h3>🏫 ${c.name} (שכבה ${c.grade})</h3>
-                            <button class="btn-danger btn-small" data-action="delete-class" data-id="${c.id}">🗑️ מחק</button>
+                            ${canDelete ? `
+                                <button class="btn-danger btn-small" data-action="delete-class" data-id="${c.id}">🗑️ מחק</button>
+                            ` : ''}
                         </div>
                         <p>👨‍🏫 <strong>מורה:</strong> ${teacher ? teacher.fullname : 'ללא שיוך'}</p>
                         <p>👥 <strong>מספר תלמידים:</strong> ${c.students.length}</p>
@@ -569,7 +626,7 @@ document.addEventListener('DOMContentLoaded', () => {
                          <div class="form-group">
                             <label for="class-teacherId">שיוך מורה:</label>
                             <select id="class-teacherId">
-                                <option value="">בחר מורה...</option>
+                                <option value="">בחר מורה (או שייך לעצמך)</option>
                                 ${teacherOptions}
                             </select>
                         </div>
@@ -588,7 +645,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function loadProfile() {
-        // (חדש) תמיכה בריבוי כיתות
         const { fullname, email, role, classIds, id } = state.currentUser;
         render(`
             <section class="view">
@@ -632,7 +688,6 @@ document.addEventListener('DOMContentLoaded', () => {
             loadView(e.target.dataset.view);
         }
         
-        // פתיחת טפסים
         if (action === 'show-add-post-form') {
             document.getElementById('add-post-form').style.display = 'grid';
             e.target.style.display = 'none';
@@ -640,14 +695,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (action === 'show-add-user-form') {
             document.getElementById('add-user-form').style.display = 'grid';
             e.target.style.display = 'none';
-            document.getElementById('edit-user-form').style.display = 'none'; // הסתר עריכה
+            document.getElementById('edit-user-form').style.display = 'none'; 
         }
         if (action === 'show-add-class-form') {
             document.getElementById('add-class-form').style.display = 'grid';
             e.target.style.display = 'none';
         }
 
-        // (חדש) פתיחת טופס עריכת משתמש
+        // (חדש) בחירת כל הכיתות בטופס הוספת הודעה
+        if (action === 'select-all-classes') {
+            const select = document.getElementById('post-classIds');
+            if (select) {
+                Array.from(select.options).forEach(opt => opt.selected = true);
+            }
+        }
+
         if (action === 'show-edit-user-form') {
             const user = JSON.parse(e.target.dataset.user);
             
@@ -655,16 +717,24 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('edit-user-fullname').value = user.fullname;
             document.getElementById('edit-user-email').value = user.email;
             document.getElementById('edit-user-role').value = user.role;
-            document.getElementById('edit-user-password').value = ''; // נקה שדה סיסמה
+            document.getElementById('edit-user-password').value = ''; 
             
-            // (חדש) בחירת כיתות קיימות
             const classSelect = document.getElementById('edit-user-classId');
             Array.from(classSelect.options).forEach(opt => {
                 opt.selected = user.classIds && user.classIds.includes(parseInt(opt.value));
             });
 
+            // (חדש) נעילת שדות עבור מורים
+            const isTeacher = state.currentUser.role === 'teacher';
+            document.getElementById('edit-user-fullname').disabled = isTeacher;
+            document.getElementById('edit-user-email').disabled = isTeacher;
+            document.getElementById('edit-user-password').disabled = isTeacher;
+            document.getElementById('edit-user-role').disabled = isTeacher;
+
             document.getElementById('edit-user-form').style.display = 'grid';
-            document.getElementById('add-user-form').style.display = 'none'; // הסתר הוספה
+            if (document.getElementById('add-user-form')) {
+                document.getElementById('add-user-form').style.display = 'none';
+            }
         }
 
         // פעולות מחיקה
@@ -683,7 +753,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 deleteItem(`/api/assignments/${id}`, 'משימה נמחקה בהצלחה', loadAssignments);
             }
         }
-        // (חדש) מחיקת כיתה
         if (action === 'delete-class') {
              if (confirm('האם אתה בטוח שברצונך למחוק כיתה זו? פעולה זו תסיר את כל התלמידים המשויכים אליה.')) {
                 deleteItem(`/api/classes/${id}`, 'כיתה נמחקה בהצלחה', loadClasses);
@@ -709,7 +778,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         try {
             if (form.id === 'add-user-form') {
-                // (חדש) קבלת מערך כיתות
                 const selectedClasses = Array.from(form['user-classId'].selectedOptions).map(opt => opt.value);
                 if (selectedClasses.length > 10) {
                     return showNotification('לא ניתן לבחור יותר מ-10 כיתות.', 'error');
@@ -724,7 +792,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 await postForm('/api/users', body, 'משתמש נוצר בהצלחה', loadUsers);
             }
             
-            // (חדש) טופס עריכת משתמש
             if (form.id === 'edit-user-form') {
                 const id = form['edit-user-id'].value;
                 const selectedClasses = Array.from(form['edit-user-classId'].selectedOptions).map(opt => opt.value);
@@ -740,6 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (form['edit-user-password'].value) {
                     body.password = form['edit-user-password'].value;
                 }
+                // השרת יטפל בהרשאות (מורה יכול לשנות רק classIds)
                 await putForm(`/api/users/${id}`, body, 'משתמש עודכן בהצלחה', loadUsers);
             }
             
@@ -752,13 +820,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 await postForm('/api/classes', body, 'כיתה נוצרה בהצלחה', loadClasses);
             }
 
+            // (חדש) לוגיקת שליחת הודעה מעודכנת
             if (form.id === 'add-post-form') {
+                const isPrivate = form['post-isPrivate'].checked;
+                let selectedClasses = [];
+                if (isPrivate) {
+                    selectedClasses = Array.from(form['post-classIds'].selectedOptions).map(opt => opt.value);
+                    if (selectedClasses.length === 0) {
+                        showNotification('בחרת בהודעה כיתתית, יש לבחור לפחות כיתה אחת.', 'error');
+                        return;
+                    }
+                }
+                
                 const body = {
                     title: form['post-title'].value,
                     content: form['post-content'].value,
-                    isPrivate: form['post-isPrivate'].checked,
-                    // (חדש) תמיכה בריבוי כיתות - שולח את הכיתה הראשונה של המורה
-                    classId: form['post-isPrivate'].checked ? (state.currentUser.classIds ? state.currentUser.classIds[0] : null) : null
+                    isPrivate: isPrivate,
+                    classIds: selectedClasses
                 };
                 await postForm('/api/posts', body, 'הודעה פורסמה בהצלחה', loadPosts);
             }
@@ -790,9 +868,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message);
                 
-                state.currentUser = data; // עדכון הסטייט המקומי
-                renderHeader(); // עדכון ההדר
-                loadProfile(); // טעינה מחדש של הפרופיל
+                state.currentUser = data; 
+                renderHeader(); 
+                loadProfile(); 
                 showNotification('הפרופיל עודכן בהצלחה!', 'success');
             }
             
@@ -816,7 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.message);
                 showNotification(data.message, 'success');
-                loadAssignments(); // (חדש) רענון רשימת המשימות להצגת ההגשה
+                loadAssignments(); 
             }
 
         } catch (error) {
@@ -837,7 +915,6 @@ document.addEventListener('DOMContentLoaded', () => {
         callback(); 
     }
     
-    // (חדש) פונקציית PUT
     async function putForm(url, body, successMessage, callback) {
          const res = await fetch(url, {
             method: 'PUT',
