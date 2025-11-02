@@ -282,7 +282,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadAssignments() {
         showLoading();
-        const isStudent = state.currentUser.role === 'student';
+        // ===== שינוי כאן =====
+        const userRole = state.currentUser.role;
+        const isStudent = userRole === 'student';
+        const canManage = userRole === 'admin' || userRole === 'teacher';
+        // =====================
         
         try {
             const res = await fetch('/api/assignments');
@@ -291,7 +295,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const assignmentsHtml = assignments.length > 0
                 ? assignments.map(a => `
                     <article class="item-card">
-                        <h3>📚 ${a.title} - 🏫 כיתה ${a.classId}</h3>
+                        
+                        <div class="item-header">
+                            <h3>📚 ${a.title} - 🏫 כיתה ${a.classId}</h3>
+                            ${canManage ?  // הוספת כפתור מחיקה למורים ומנהלים
+                            `<button class="btn-danger btn-small" data-action="delete-assignment" data-id="${a.id}">🗑️ מחק</button>` 
+                            : ''}
+                        </div>
                         <p>📋 <strong>תיאור:</strong> ${a.description}</p>
                         <p><small>⏰ <strong>מועד הגשה:</strong> ${new Date(a.dueDate).toLocaleDateString('he-IL')}</small></p>
                         <p><small>👨‍🏫 <strong>מורה:</strong> ${a.teacherName}</small></p>
@@ -573,6 +583,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 deleteItem(`/api/posts/${id}`, 'הודעה נמחקה בהצלחה', loadPosts);
             }
         }
+        
+        // ===== טיפול בלחיצה על מחיקת משימה =====
+        if (action === 'delete-assignment') {
+            if (confirm('האם אתה בטוח שברצונך למחוק משימה זו? פעולה זו תמחק גם את כל ההגשות של התלמידים.')) {
+                deleteItem(`/api/assignments/${id}`, 'משימה נמחקה בהצלחה', loadAssignments);
+            }
+        }
+        // ======================================
     }
     
     async function deleteItem(url, successMessage, callback) {
