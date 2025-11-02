@@ -54,43 +54,6 @@ let db = {
     assignments: []
 };
 
-function loadDb() {
-    try {
-        if (fs.existsSync(DB_PATH)) {
-            const data = fs.readFileSync(DB_PATH, 'utf-8');
-            db = JSON.parse(data);
-            console.log("מסד הנתונים נטען בהצלחה.");
-        } else {
-            // נתוני דוגמה אם הקובץ לא קיים
-            const adminPass = bcrypt.hashSync('yair12345', saltRounds);
-            const teacherPass = bcrypt.hashSync('teacher123', saltRounds);
-            const studentPass = bcrypt.hashSync('student123', saltRounds);
-            
-            db.users = [
-                { id: 1, fullname: "יאיר פריש", email: "yairfrish2@gmail.com", password: adminPass, role: "admin", classIds: [] },
-                { id: 2, fullname: "מרים כהן", email: "teacher@school.com", password: teacherPass, role: "teacher", classIds: [101] },
-                { id: 3, fullname: "דנה לוי", email: "student@school.com", password: studentPass, role: "student", classIds: [101] }
-            ];
-            db.classes = [
-                { id: 101, name: "כיתה א'1", grade: "א", teacherId: 2, students: [3] }
-            ];
-            db.posts = [
-                { id: 1, title: 'ברוכים הבאים לאתר', content: 'שנת לימודים מוצלחת ומהנה לכולם!', authorId: 1, authorName: "יאיר פריש", date: new Date(), isPrivate: false, classId: null },
-                { id: 2, title: 'שיעורי בית בחשבון', content: 'נא להכין עמוד 10 בספר.', authorId: 2, authorName: "מרים כהן", date: new Date(), isPrivate: true, classId: 101 }
-            ];
-            db.assignments = [
-                { id: 1, title: 'משימה בחשבון', description: 'לפתור את 10 התרגילים בעמוד 10.', dueDate: '2025-11-10', teacherId: 2, teacherName: "מרים כהן", classId: 101, submissions: [] }
-            ];
-            
-            saveDb();
-            console.log("מסד נתונים חדש נוצר עם נתוני דוגמה.");
-        }
-    } catch (error) {
-        console.error("שגיאה בטעינת מסד הנתונים:", error);
-        process.exit(1); // עצירת השרת אם אי אפשר לטעון DB
-    }
-}
-
 function saveDb() {
     try {
         fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), 'utf-8');
@@ -104,6 +67,81 @@ const getNextId = (collection) => {
     if (collection.length === 0) return 1;
     return Math.max(...collection.map(item => item.id)) + 1;
 };
+
+
+// פונקציה חדשה שנוספה כדי לוודא שמשתמשי הדוגמה תמיד קיימים ומוצפנים.
+function ensureDefaultUsers() {
+    const defaultUsersData = [
+        { fullname: "יאיר פריש", email: "yairfrish2@gmail.com", plaintextPassword: 'yair12345', role: "admin", classIds: [] },
+        { fullname: "מרים כהן", email: "teacher@school.com", plaintextPassword: 'teacher123', role: "teacher", classIds: [101] },
+        { fullname: "דנה לוי", email: "student@school.com", plaintextPassword: 'student123', role: "student", classIds: [101] }
+    ];
+
+    let dbChanged = false;
+
+    defaultUsersData.forEach(defaultUser => {
+        const existingUser = db.users.find(u => u.email === defaultUser.email);
+        
+        if (!existingUser) {
+            // 1. אם משתמש הדוגמה חסר, נוסיף אותו
+            const hashedPassword = bcrypt.hashSync(defaultUser.plaintextPassword, saltRounds);
+            const newUser = {
+                id: getNextId(db.users),
+                fullname: defaultUser.fullname,
+                email: defaultUser.email,
+                password: hashedPassword,
+                role: defaultUser.role,
+                classIds: defaultUser.classIds
+            };
+            db.users.push(newUser);
+            dbChanged = true;
+            console.log(`[DB] ✅ נוצר משתמש דוגמה: ${defaultUser.fullname}`);
+        } else {
+             // 2. אם המשתמש קיים, בודקים האם הסיסמה שלו מוצפנת (bcrypt מתחיל ב-$2a$).
+            if (!existingUser.password || !existingUser.password.startsWith('$2a$')) {
+                 console.log(`[DB] ⚠️ מזהה סיסמה לא מוצפנת עבור ${defaultUser.fullname}. מצפין מחדש.`);
+                 existingUser.password = bcrypt.hashSync(defaultUser.plaintextPassword, saltRounds);
+                 dbChanged = true;
+            }
+            // עדכון שדות נוספים אם המשתמש קיים (למשל תפקיד)
+            if (existingUser.role !== defaultUser.role) {
+                existingUser.role = defaultUser.role;
+                dbChanged = true;
+            }
+        }
+    });
+
+    // ודא שגם כיתת הדוגמה קיימת (אם לא קיימת)
+    if (!db.classes.find(c => c.id === 101)) {
+        db.classes.push({ id: 101, name: "כיתה א'1", grade: "א", teacherId: db.users.find(u => u.email === 'teacher@school.com')?.id || 2, students: [db.users.find(u => u.email === 'student@school.com')?.id || 3] });
+        dbChanged = true;
+    }
+
+
+    if (dbChanged) {
+        saveDb();
+    }
+}
+
+
+function loadDb() {
+    try {
+        if (fs.existsSync(DB_PATH)) {
+            const data = fs.readFileSync(DB_PATH, 'utf-8');
+            db = JSON.parse(data);
+            console.log("מסד הנתונים נטען בהצלחה.");
+        } else {
+             console.log("קובץ db.json לא נמצא. יוצר מסד נתונים ריק.");
+        }
+        
+        // ודא שמשתמשי הדוגמה קיימים ועם סיסמה מוצפנת, מבלי לאפס משתמשים קיימים.
+        ensureDefaultUsers();
+        
+    } catch (error) {
+        console.error("שגיאה בטעינת מסד הנתונים:", error);
+        process.exit(1); // עצירת השרת אם אי אפשר לטעון DB
+    }
+}
 
 
 // --- Middleware - אימות והרשאות ---
@@ -285,7 +323,7 @@ app.post('/api/users', isAuthenticated, isAdmin, (req, res) => {
     res.status(201).json(safeUser);
 });
 
-// (חדש) עריכת משתמש
+// עריכת משתמש
 app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     const userId = parseInt(req.params.id);
     let { fullname, email, role, classIds, password } = req.body;
@@ -297,7 +335,7 @@ app.put('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const user = db.users[userIndex];
     
-    // (חדש) הגנה על משתמש
+    // הגנה על משתמש
     if (user.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן לערוך משתמש זה.' });
     }
@@ -358,7 +396,7 @@ app.delete('/api/users/:id', isAuthenticated, isAdmin, (req, res) => {
     
     const deletedUser = db.users[userIndex];
 
-    // (חדש) הגנה על משתמש
+    // הגנה על משתמש
     if (deletedUser.email === 'yairfrish2@gmail.com') {
         return res.status(403).json({ message: 'לא ניתן למחוק משתמש זה.' });
     }
@@ -384,7 +422,7 @@ app.get('/api/classes', (req, res) => {
     res.json(db.classes);
 });
 
-// *** תיקון: מורה יוצר כיתה רק לעצמו ***
+// יצירת כיתה
 app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const { name, grade, teacherId } = req.body;
     const user = req.session.user; // המשתמש המחובר
@@ -415,7 +453,7 @@ app.post('/api/classes', isAuthenticated, isAdminOrTeacher, (req, res) => {
     res.status(201).json(newClass);
 });
 
-// (חדש) מחיקת כיתה
+// מחיקת כיתה
 app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
     
@@ -424,7 +462,7 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
         return res.status(404).json({ message: 'כיתה לא נמצאה.' });
     }
 
-    // (אופציונלי - רק מנהל או המורה *המשויך* יכולים למחוק)
+    // בדיקת הרשאה: רק מנהל או המורה *המשויך* יכולים למחוק
     const aClass = db.classes[classIndex];
     if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
         return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים למחוק אותה.' });
@@ -444,7 +482,7 @@ app.delete('/api/classes/:id', isAuthenticated, isAdminOrTeacher, (req, res) => 
 });
 
 
-// *** שינוי כאן: API להוספת תלמידים לכיתה, למנהלים או למורה של הכיתה ***
+// API להוספת תלמידים לכיתה
 app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, res) => {
     const classId = parseInt(req.params.id);
     const { studentId } = req.body; // נצפה לקבל studentId
@@ -455,7 +493,7 @@ app.post('/api/classes/:id/students', isAuthenticated, isAdminOrTeacher, (req, r
         return res.status(404).json({ message: 'כיתה לא נמצאה.' });
     }
 
-    // (חדש) בדיקת הרשאות: או מנהל, או המורה המשויך לכיתה
+    // בדיקת הרשאות: או מנהל, או המורה המשויך לכיתה
     if (req.session.user.role !== 'admin' && aClass.teacherId !== req.session.user.id) {
         return res.status(403).json({ message: 'רק מנהל או המורה המשויך לכיתה רשאים להוסיף תלמידים.' });
     }
@@ -495,7 +533,7 @@ app.get('/api/posts', (req, res) => {
     // מורה ותלמיד רואים הודעות ציבוריות + הודעות כיתתיות
     const userClassIds = user.classIds || [];
     const filteredPosts = db.posts.filter(post => 
-        !post.isPrivate || userClassIds.includes(post.classId)
+        !post.isPrivate || (post.isPrivate && userClassIds.includes(post.classId))
     );
     
     res.json(filteredPosts.sort((a, b) => new Date(b.date) - new Date(a.date)));
@@ -513,7 +551,6 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, (req, res) => {
         authorName: author.fullname,
         date: new Date(),
         isPrivate: !!isPrivate,
-        // *** שינוי כאן: אם פרטי, השתמש בכיתה שנבחרה. ה-fallback הוסר ***
         classId: isPrivate ? (parseInt(classId) || null) : null
     };
     
@@ -553,7 +590,7 @@ app.get('/api/assignments', (req, res) => {
     }
     
     if (user.role === 'teacher') {
-        // מורה רואה משימות שהוא יצר + משימות לכיתות שהוא משויך אליהן (אם רוצים)
+        // מורה רואה משימות שהוא יצר
         const teacherAssignments = db.assignments.filter(a => a.teacherId === user.id);
         return res.json(teacherAssignments);
     }
@@ -590,7 +627,7 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, (req, res) => {
     res.status(201).json(newAssignment);
 });
 
-// נקודת קצה להגשת משימה (כולל תיקון לבאג מחיקת קבצים)
+// נקודת קצה להגשת משימה
 app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissionFile'), (req, res) => {
     const assignmentId = parseInt(req.params.id);
     const student = req.session.user;
@@ -622,14 +659,13 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('submissi
     if (existingSubmissionIndex > -1) {
         const oldSubmission = assignment.submissions[existingSubmissionIndex];
         
-        // *** התיקון הקריטי: בדיקה בטיחותית לפני מחיקת קובץ ישן ***
+        // תיקון קריטי: מחיקת הקובץ הישן כדי למנוע דליפת קבצים
         if (oldSubmission.file && oldSubmission.file.path) {
             const oldFile = oldSubmission.file.path;
             if (fs.existsSync(oldFile)) {
                 fs.unlinkSync(oldFile); // מחיקת הקובץ הפיזי הישן
             }
         }
-        // ***************************************************************
         
         assignment.submissions[existingSubmissionIndex] = newSubmission;
     } else {
