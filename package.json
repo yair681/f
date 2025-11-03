@@ -1,22 +1,17 @@
 {
-  "name": "school-management-system-detailed",
+  "name": "school-server",
   "version": "1.0.0",
-  "description": "מערכת ניהול בית ספרית לפי מפרט",
+  "description": "A Node.js/Express server for a school management system.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "express": "^4.18.2",
-    "express-session": "^1.17.3",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "mongoose": "^8.4.1", 
     "multer": "^1.4.5-lts.1",
-    
-    "knex": "^3.1.0", 
-    "pg": "^8.11.3" ,
-    
-    "cloudinary": "^1.41.3",
-    "multer-storage-cloudinary": "^4.0.0",
-    "@octokit/rest": "^22.0.1"
+    "path": "^0.12.7"
   }
 }
