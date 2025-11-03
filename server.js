@@ -37,13 +37,14 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// 🔑 תיקון קריטי: הוספת CORS כדי לאפשר מעבר Session Cookies בין דומיינים ב-Render
+// 🔑 תיקון קריטי: הוספת CORS (מאפשר מעבר Session Cookies בין דומיינים)
 app.use((req, res, next) => {
-    // ניתן להגדיר כאן את הדומיין הספציפי של ה-Frontend שלך אם הוא נפרד, או '*' לכל
+    // ⚠️ אם אתה יודע את כתובת ה-Frontend ב-Render, החלף את '*' בכתובת המדויקת.
+    // אם ה-Frontend וה-Backend הם דומיינים שונים:
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    // קריטי: מאפשר העברת Credentials (כולל Cookies)
+    // 🛑 קריטי: מאפשר העברת Credentials (כולל Cookies)
     res.setHeader('Access-Control-Allow-Credentials', 'true'); 
     
     if (req.method === 'OPTIONS') {
@@ -61,13 +62,13 @@ app.use(session({
     store: MongoStore.create({
         mongoUrl: MONGODB_URI, 
         collectionName: 'sessions', // שם הקולקציה לשמירת נתוני הסשן
-        ttl: 14 * 24 * 60 * 60 // 14 ימים (זמן חיים, בשניות)
+        ttl: 14 * 24 * 60 * 60 // 14 ימים
     }),
     cookie: { 
-        // ✅ תיקון קריטי ל-HTTPS ב-Render
+        // ✅ תיקון קריטי: בודק אם אנחנו בסביבת ייצור (HTTPS)
         secure: process.env.NODE_ENV === 'production' ? true : false, 
         httpOnly: true, // אבטחה מוגברת
-        // ✅ תיקון קריטי ל-Cross-Site session ב-Render
+        // ✅ תיקון קריטי: מאפשר Cross-Site Session רק אם אנחנו ב-HTTPS (secure: true)
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', 
         maxAge: 1000 * 60 * 60 * 24 // 24 שעות
     }
@@ -192,7 +193,6 @@ async function ensureDefaultUsers() {
 
 // --- Middleware - אימות והרשאות ---
 const isAuthenticated = (req, res, next) => {
-    // קוד דיבוג מוסר - ההתנהגות נשארת: בודק אם קיים משתמש בסשן
     if (req.session.user) {
         next();
     } else {
