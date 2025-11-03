@@ -37,6 +37,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// 🔑 הוספת CORS כדי לאפשר מעבר Session Cookies בין דומיינים ב-Render
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Credentials', 'true'); 
+    
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(200);
+    }
+    next();
+});
+
 // ⚙️ הגדרות express-session המעודכנות: שימוש ב-MongoStore ובתיקון Cookie
 app.use(session({
     secret: 'a-very-strong-secret-key-for-school',
@@ -59,7 +72,6 @@ app.use(session({
 
 
 // --- הגדרת סכמות Mongoose (המבנה של הנתונים) ---
-
 const UserSchema = new mongoose.Schema({
     fullname: { type: String, required: true },
     email: { type: String, unique: true, required: true },
@@ -137,7 +149,6 @@ async function ensureDefaultUsers() {
             });
             console.log(`[DB] ✅ נוצר משתמש דוגמה: ${defaultUser.fullname}`);
         } else {
-            // לוודא שהסיסמה מוצפנת (בדיקה גסה)
             if (!user.password || !user.password.startsWith('$2a$')) {
                  user.password = bcrypt.hashSync(defaultUser.plaintextPassword, saltRounds);
                  await user.save();
@@ -146,7 +157,6 @@ async function ensureDefaultUsers() {
         usersMap[defaultUser.role] = user;
     }
 
-    // מציאת או יצירת כיתת הדוגמה (ID 101)
     const teacherUser = usersMap['teacher'];
     const studentUser = usersMap['student'];
 
@@ -161,7 +171,6 @@ async function ensureDefaultUsers() {
         });
         console.log(`[DB] ✅ נוצרה כיתת דוגמה: א'1`);
     } else {
-        // לוודא שהכיתה מקושרת נכון
         let needsUpdate = false;
         if (!class101.teacherId || class101.teacherId.toString() !== teacherUser._id.toString()) {
             class101.teacherId = teacherUser._id;
@@ -180,9 +189,16 @@ async function ensureDefaultUsers() {
 
 // --- Middleware - אימות והרשאות ---
 const isAuthenticated = (req, res, next) => {
+    // 💡 הדפסת דיבוג 3: האם יש Session ID בבקשה?
+    console.log(`[DEBUG] Checking Auth for path: ${req.path}. Session ID in request: ${req.session.id}`);
+
     if (req.session.user) {
+        // ✅ הצליח!
+        console.log(`[DEBUG] SUCCESS: User ${req.session.user.fullname} is authenticated.`);
         next();
     } else {
+        // ❌ נכשל!
+        console.log(`[DEBUG] FAIL: No user in session. Sending 401.`);
         res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
     }
 };
@@ -209,20 +225,34 @@ const isAdminOrTeacher = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     
+    // 💡 הדפסת דיבוג 1: מה השרת מקבל?
+    console.log(`[DEBUG] Login attempt for email: ${email}`);
+
     try {
         const user = await User.findOne({ email });
 
-        if (user) {
-            if (bcrypt.compareSync(password, user.password)) {
-                const userSession = user.toObject(); 
-                delete userSession.password;
-                
-                req.session.user = userSession;
-                res.json(userSession);
-            } else {
-                res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
-            }
+        if (!user) {
+            console.log(`[DEBUG] FAIL: User not found for email: ${email}`);
+            return res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
+        }
+
+        // השוואת סיסמה
+        if (bcrypt.compareSync(password, user.password)) {
+            // ✅ הצליח!
+            console.log(`[DEBUG] SUCCESS: Password match for user: ${user.fullname}`);
+            
+            const userSession = user.toObject(); 
+            delete userSession.password;
+            
+            req.session.user = userSession;
+            
+            // 💡 הדפסת דיבוג 2: האם ה-Session ID נוצר?
+            console.log(`[DEBUG] Session created. SID: ${req.session.id}`);
+
+            res.json(userSession);
         } else {
+            // ❌ נכשל!
+            console.log(`[DEBUG] FAIL: Password mismatch for user: ${user.fullname}`);
             res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
         }
     } catch (error) {
