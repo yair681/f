@@ -37,11 +37,13 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// 🔑 הוספת CORS כדי לאפשר מעבר Session Cookies בין דומיינים ב-Render
+// 🔑 תיקון קריטי: הוספת CORS כדי לאפשר מעבר Session Cookies בין דומיינים ב-Render
 app.use((req, res, next) => {
+    // ניתן להגדיר כאן את הדומיין הספציפי של ה-Frontend שלך אם הוא נפרד, או '*' לכל
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    // קריטי: מאפשר העברת Credentials (כולל Cookies)
     res.setHeader('Access-Control-Allow-Credentials', 'true'); 
     
     if (req.method === 'OPTIONS') {
@@ -62,10 +64,11 @@ app.use(session({
         ttl: 14 * 24 * 60 * 60 // 14 ימים (זמן חיים, בשניות)
     }),
     cookie: { 
-        // ✅ תיקון קריטי: מאפשר שמירת Cookie תחת HTTPS ב-Render
+        // ✅ תיקון קריטי ל-HTTPS ב-Render
         secure: process.env.NODE_ENV === 'production' ? true : false, 
         httpOnly: true, // אבטחה מוגברת
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // קריטי ל-Cross-Site session ב-Render
+        // ✅ תיקון קריטי ל-Cross-Site session ב-Render
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', 
         maxAge: 1000 * 60 * 60 * 24 // 24 שעות
     }
 }));
@@ -189,16 +192,10 @@ async function ensureDefaultUsers() {
 
 // --- Middleware - אימות והרשאות ---
 const isAuthenticated = (req, res, next) => {
-    // 💡 הדפסת דיבוג 3: האם יש Session ID בבקשה?
-    console.log(`[DEBUG] Checking Auth for path: ${req.path}. Session ID in request: ${req.session.id}`);
-
+    // קוד דיבוג מוסר - ההתנהגות נשארת: בודק אם קיים משתמש בסשן
     if (req.session.user) {
-        // ✅ הצליח!
-        console.log(`[DEBUG] SUCCESS: User ${req.session.user.fullname} is authenticated.`);
         next();
     } else {
-        // ❌ נכשל!
-        console.log(`[DEBUG] FAIL: No user in session. Sending 401.`);
         res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
     }
 };
@@ -225,34 +222,22 @@ const isAdminOrTeacher = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     
-    // 💡 הדפסת דיבוג 1: מה השרת מקבל?
-    console.log(`[DEBUG] Login attempt for email: ${email}`);
-
     try {
         const user = await User.findOne({ email });
 
         if (!user) {
-            console.log(`[DEBUG] FAIL: User not found for email: ${email}`);
             return res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
         }
 
         // השוואת סיסמה
         if (bcrypt.compareSync(password, user.password)) {
-            // ✅ הצליח!
-            console.log(`[DEBUG] SUCCESS: Password match for user: ${user.fullname}`);
-            
             const userSession = user.toObject(); 
             delete userSession.password;
             
             req.session.user = userSession;
             
-            // 💡 הדפסת דיבוג 2: האם ה-Session ID נוצר?
-            console.log(`[DEBUG] Session created. SID: ${req.session.id}`);
-
             res.json(userSession);
         } else {
-            // ❌ נכשל!
-            console.log(`[DEBUG] FAIL: Password mismatch for user: ${user.fullname}`);
             res.status(401).json({ message: 'אימייל או סיסמה שגויים.' });
         }
     } catch (error) {
