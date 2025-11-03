@@ -24,9 +24,10 @@ document.addEventListener('DOMContentLoaded', () => {
              // 🛑 התיקון הקריטי: שולח את ה-Cookie של ה-Session
             credentials: 'include' 
         });
+        // 🚨 בודק אם ה-Session לא תקין או פג
         if (res.status === 401) {
              window.location.href = '/login.html'; // מפנה להתחברות במקרה של 401
-             throw new Error('Unauthorized');
+             throw new Error('Unauthorized'); // זורק שגיאה כדי לעצור את המשך הקוד בבלוק ה-try/catch
         }
         const data = await res.json();
         if (!res.ok) throw new Error(data.message);
@@ -92,18 +93,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Initialization ---
     async function initializeApp() {
         try {
-            // 🛑 שימוש ב-get המתוקן במקום fetch ישיר
+            // 🛑 שימוש ב-get המתוקן בבדיקה הראשונית
             const user = await get('/api/me'); 
             state.currentUser = user; 
             
             renderLayout();
             loadView('dashboard'); // טעינת עמוד הבית כברירת מחדל
         } catch (error) {
-            // במקרה של 401 ב-/api/me, ה-get כבר הפנה ל-login.html
+            // במקרה של 401 ב-/api/me, ה-get כבר הפנה ל-login.html, 
+            // אנחנו רק מנקים את המצב המקומי
             console.error('Error initializing app:', error);
             state.currentUser = null;
             renderLayout();
-            loadView('publicPosts'); // אם יש שגיאה, טען עמוד ציבורי
+            loadView('publicPosts'); 
         }
         
         // הוספת Event Listeners גלובליים
@@ -282,7 +284,7 @@ document.addEventListener('DOMContentLoaded', () => {
     async function loadPublicPosts() {
         showLoading();
         try {
-            // 🛑 שימוש ב-get המתוקן
+            // 🛑 שימוש ב-get המתוקן (שמטפל ב-401)
             const posts = await get('/api/posts');
             
             const postsHtml = posts.length > 0
@@ -308,7 +310,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת ההודעות נכשלה.');
+            // אם ה-get זרק Unauthorized (401), הוא כבר הפנה ללוגין.
+            // אם זו שגיאה אחרת, נציג הודעה.
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת ההודעות נכשלה.');
+            }
         }
     }
 
@@ -348,8 +354,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     <article class="item-card">
                         <div class="item-header">
                             <h3>📝 ${post.title} ${post.isPrivate ? `(🏫 כיתה ${post.classId})` : '(כללי)'}</h3>
-                            ${state.currentUser.role === 'admin' || state.currentUser.id === post.authorId ?
-                            `<button class="btn-danger btn-small" data-action="delete-post" data-id="${post.id}">🗑️ מחק</button>` : ''}
+                            ${state.currentUser.role === 'admin' || state.currentUser._id === post.authorId ?
+                            `<button class="btn-danger btn-small" data-action="delete-post" data-id="${post._id}">🗑️ מחק</button>` : ''}
                         </div>
                         <p>${post.content}</p>
                         <small>👤 פורסם על ידי ${post.authorName} 📅 ${new Date(post.date).toLocaleDateString('he-IL')}</small>
@@ -395,7 +401,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת ההודעות נכשלה.');
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת ההודעות נכשלה.');
+            }
         }
     }
 
@@ -468,7 +476,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת המשימות נכשלה.');
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת המשימות נכשלה.');
+            }
         }
     }
 
@@ -507,7 +517,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת טופס המשימות נכשלה.');
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת טופס המשימות נכשלה.');
+            }
         }
     }
 
@@ -633,7 +645,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת המשתמשים נכשלה.');
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת המשתמשים נכשלה.');
+            }
         }
     }
     
@@ -735,7 +749,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 </section>
             `);
         } catch (error) {
-            renderError('טעינת הכיתות נכשלה.');
+            if (error.message !== 'Unauthorized') {
+                renderError('טעינת הכיתות נכשלה.');
+            }
         }
     }
     
@@ -772,7 +788,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function renderError(message) {
-        render(`<div class="message error">${message}</div>`);
+        contentEl.innerHTML = `<div class="message error">${message}</div>`;
     }
     
     // --- Event Handlers (Delegation) ---
@@ -861,7 +877,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
     
-    // פונקציית deleteItem הקודמת הוחלפה ב-deleteData ב-API Helper
 
     // *** שינוי כאן: טיפול בטפסים החדשים ***
     async function handleFormSubmit(e) {
@@ -987,6 +1002,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: JSON.stringify(body)
                 });
                 const data = await res.json();
+                if (res.status === 401) {
+                    window.location.href = '/login.html';
+                    throw new Error('Unauthorized');
+                }
                 if (!res.ok) throw new Error(data.message);
                 
                 state.currentUser = data; // עדכון הסטייט המקומי
@@ -1005,7 +1024,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
                 
                 const formData = new FormData();
-                formData.append('submissionFile', fileInput.files[0]);
+                formData.append('file', fileInput.files[0]);
                 
                 const res = await fetch(`/api/assignments/${id}/submit`, {
                     method: 'POST',
@@ -1015,6 +1034,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 
                 const data = await res.json();
+                 if (res.status === 401) {
+                    window.location.href = '/login.html';
+                    throw new Error('Unauthorized');
+                }
                 if (!res.ok) throw new Error(data.message);
                 showNotification(data.message, 'success');
                 loadAssignments(); // (חדש) רענון רשימת המשימות להצגת ההגשה
@@ -1022,11 +1045,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             console.error('Form Error:', error);
-            showNotification(error.message || 'אירעה שגיאה.', 'error');
+            // אם זו לא שגיאת Unauthorized (שכבר הפנתה לדף אחר), הצג התראה
+            if (error.message !== 'Unauthorized') {
+                showNotification(error.message || 'אירעה שגיאה.', 'error');
+            }
         }
     }
-    
-    // הפונקציות postForm ו-putForm הישנות הוסרו, כעת משתמשים ב-postData ו-putData.
     
     // --- Helpers ---
     function translateRole(role) {
