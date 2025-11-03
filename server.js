@@ -5,14 +5,14 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const mongoose = require('mongoose');
-const MongoStore = require('connect-mongo'); // ⬅️ חדש: ספרייה לשמירת Session ב-MongoDB
+const MongoStore = require('connect-mongo');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const saltRounds = 10;
 const uploadDir = 'uploads/';
 
-// 🚨 חשוב: מחרוזת החיבור ל-MongoDB (צריך להיות מוגדר כמשתנה סביבה!)
+// 🚨 חשוב: מחרוזת החיבור ל-MongoDB (MONGODB_URI)
 const MONGODB_URI = process.env.MONGODB_URI; 
 
 if (!MONGODB_URI) {
@@ -20,7 +20,6 @@ if (!MONGODB_URI) {
     console.error("--- עצור! עליך להגדיר את המשתנה הסביבתי הזה. ---");
     process.exit(1);
 }
-
 
 // --- הגדרת Multer להעלאת קבצים ---
 if (!fs.existsSync(uploadDir)){
@@ -38,19 +37,22 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ⚙️ הגדרות express-session המעודכנות: שימוש ב-MongoStore
+// ⚙️ הגדרות express-session המעודכנות: שימוש ב-MongoStore ובתיקון Cookie
 app.use(session({
     secret: 'a-very-strong-secret-key-for-school',
     resave: false,
     saveUninitialized: false,
     // 🔑 הגדרת MongoStore לשמירת ה-Session ב-MongoDB Atlas
     store: MongoStore.create({
-        mongoUrl: MONGODB_URI, // משתמשים ב-URI שהוגדר למעלה
-        collectionName: 'sessions', // שם הקולקציה לשמירת הסשנים
-        ttl: 14 * 24 * 60 * 60 // 14 ימים (זמן חיים של הסשן, בשניות)
+        mongoUrl: MONGODB_URI, 
+        collectionName: 'sessions', // שם הקולקציה לשמירת נתוני הסשן
+        ttl: 14 * 24 * 60 * 60 // 14 ימים (זמן חיים, בשניות)
     }),
     cookie: { 
-        secure: process.env.NODE_ENV === 'production', // true ב-Render, false מקומית
+        // ✅ תיקון קריטי: מאפשר שמירת Cookie תחת HTTPS ב-Render
+        secure: process.env.NODE_ENV === 'production' ? true : false, 
+        httpOnly: true, // אבטחה מוגברת
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax', // קריטי ל-Cross-Site session ב-Render
         maxAge: 1000 * 60 * 60 * 24 // 24 שעות
     }
 }));
@@ -63,21 +65,21 @@ const UserSchema = new mongoose.Schema({
     email: { type: String, unique: true, required: true },
     password: { type: String, required: true },
     role: { type: String, enum: ['admin', 'teacher', 'student'], required: true },
-    classIds: { type: [Number], default: [] }, // מערך של מזהי כיתות
+    classIds: { type: [Number], default: [] }, 
 });
 
 const ClassSchema = new mongoose.Schema({
-    id: { type: Number, unique: true, required: true }, // מזהה קשיח
+    id: { type: Number, unique: true, required: true }, 
     name: { type: String, required: true },
     grade: String,
-    teacherId: mongoose.Schema.Types.ObjectId, // מזהה של מורה (ObjectId)
-    students: { type: [mongoose.Schema.Types.ObjectId], default: [] }, // מערך מזהי תלמידים (ObjectId)
+    teacherId: mongoose.Schema.Types.ObjectId, 
+    students: { type: [mongoose.Schema.Types.ObjectId], default: [] }, 
 });
 
 const PostSchema = new mongoose.Schema({
     title: { type: String, required: true },
     content: String,
-    authorId: { type: mongoose.Schema.Types.ObjectId, required: true }, // מזהה מחבר (ObjectId)
+    authorId: { type: mongoose.Schema.Types.ObjectId, required: true }, 
     authorName: String,
     date: { type: Date, default: Date.now },
     isPrivate: { type: Boolean, default: false },
@@ -92,9 +94,9 @@ const AssignmentSchema = new mongoose.Schema({
     teacherName: String,
     classId: { type: Number, required: true },
     submissions: { type: [{
-        studentId: mongoose.Schema.Types.ObjectId, // מזהה תלמיד שהגיש
+        studentId: mongoose.Schema.Types.ObjectId, 
         studentName: String,
-        file: Object, // לשמור את מטא-נתונים של הקובץ מ-Multer
+        file: Object, 
         date: Date
     }], default: [] },
 });
@@ -105,15 +107,14 @@ const Class = mongoose.model('Class', ClassSchema, 'classes');
 const Post = mongoose.model('Post', PostSchema);
 const Assignment = mongoose.model('Assignment', AssignmentSchema);
 
-// פונקציה לעדכון אוטומטי של ה-ID הבא (לצורך ClassId במקום ObjectId)
+// פונקציה לעדכון אוטומטי של ה-ID הבא
 async function getNextClassId() {
     const lastClass = await Class.findOne().sort({ id: -1 });
-    // אם אין כיתות, נתחיל מ-101. אחרת, נמשיך הלאה.
     return lastClass ? lastClass.id + 1 : 101; 
 }
 
 
-// פונקציה המבטיחה שמשתמשי הדוגמה קיימים ומוצפנים
+// פונקציה המבטיחה שמשתמשי הדוגמה קיימים
 async function ensureDefaultUsers() {
     const defaultUsersData = [
         { fullname: "יאיר פריש", email: "yairfrish2@gmail.com", plaintextPassword: 'yair12345', role: "admin", classIds: [101] },
@@ -121,7 +122,6 @@ async function ensureDefaultUsers() {
         { fullname: "דנה לוי", email: "student@school.com", plaintextPassword: 'student123', role: "student", classIds: [101] }
     ];
 
-    // מציאת או יצירת משתמשי הדוגמה
     const usersMap = {};
     for (const defaultUser of defaultUsersData) {
         let user = await User.findOne({ email: defaultUser.email });
@@ -137,7 +137,7 @@ async function ensureDefaultUsers() {
             });
             console.log(`[DB] ✅ נוצר משתמש דוגמה: ${defaultUser.fullname}`);
         } else {
-             // לוודא שהסיסמה מוצפנת (בדיקה גסה)
+            // לוודא שהסיסמה מוצפנת (בדיקה גסה)
             if (!user.password || !user.password.startsWith('$2a$')) {
                  user.password = bcrypt.hashSync(defaultUser.plaintextPassword, saltRounds);
                  await user.save();
@@ -161,7 +161,7 @@ async function ensureDefaultUsers() {
         });
         console.log(`[DB] ✅ נוצרה כיתת דוגמה: א'1`);
     } else {
-        // לוודא שהכיתה מקושרת נכון למורה ולתלמיד הדוגמה
+        // לוודא שהכיתה מקושרת נכון
         let needsUpdate = false;
         if (!class101.teacherId || class101.teacherId.toString() !== teacherUser._id.toString()) {
             class101.teacherId = teacherUser._id;
@@ -181,7 +181,6 @@ async function ensureDefaultUsers() {
 // --- Middleware - אימות והרשאות ---
 const isAuthenticated = (req, res, next) => {
     if (req.session.user) {
-        // המשתמש מחובר - ממשיך
         next();
     } else {
         res.status(401).json({ message: 'אינך מחובר. יש להתחבר למערכת.' });
@@ -211,13 +210,10 @@ app.post('/api/login', async (req, res) => {
     const { email, password } = req.body;
     
     try {
-        // מציאת המשתמש לפי אימייל
         const user = await User.findOne({ email });
 
         if (user) {
-            // השוואת סיסמה
             if (bcrypt.compareSync(password, user.password)) {
-                // יוצרים אובייקט סשן ללא סיסמה
                 const userSession = user.toObject(); 
                 delete userSession.password;
                 
@@ -250,7 +246,6 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/me', async (req, res) => {
     if (req.session.user) {
         try {
-            // מביא את הנתונים העדכניים של המשתמש מה-DB
             const freshUser = await User.findById(req.session.user._id);
 
             if (freshUser) {
@@ -259,7 +254,6 @@ app.get('/api/me', async (req, res) => {
                 req.session.user = userSession;
                 res.json(userSession);
             } else {
-                // אם המשתמש נמחק מה-DB
                 req.session.destroy(() => {
                     res.json(null);
                 });
@@ -285,12 +279,10 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
             return res.status(404).json({ message: 'משתמש לא נמצא.' });
         }
         
-        // מניעת שינוי אימייל מנהל ראשי
         if (user.email === 'yairfrish2@gmail.com' && email && email !== 'yairfrish2@gmail.com') {
              return res.status(403).json({ message: 'לא ניתן לשנות את האימייל של משתמש זה.' });
         }
 
-        // בדיקה אם האימייל החדש כבר קיים
         if (email && email !== user.email) {
             const existingEmail = await User.findOne({ email, _id: { $ne: userId } });
             if (existingEmail) {
@@ -307,7 +299,6 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
 
         await user.save();
         
-        // עדכון הסשן
         const userSession = user.toObject();
         delete userSession.password;
         req.session.user = userSession;
@@ -322,7 +313,6 @@ app.put('/api/profile', isAuthenticated, async (req, res) => {
 // Users Management (Admin) - Get
 app.get('/api/users', isAuthenticated, isAdmin, async (req, res) => {
     try {
-        // מחזיר את כל המשתמשים ללא שדה סיסמה
         const users = await User.find({}, { password: 0 }); 
         res.json(users);
     } catch (error) {
@@ -359,7 +349,6 @@ app.post('/api/users', isAuthenticated, isAdmin, async (req, res) => {
         
         await newUser.save();
         
-        // הוספת התלמיד לכיתות המתאימות בטבלת Classes
         if (role === 'student' && studentClassIds.length > 0) {
              await Class.updateMany(
                 { id: { $in: studentClassIds }, students: { $ne: newUser._id } },
@@ -392,7 +381,6 @@ app.post('/api/classes', isAuthenticated, isAdminOrTeacher, async (req, res) => 
     const { name, grade, teacherId } = req.body;
     const user = req.session.user;
 
-    // מזהה המורה מושג מהסשן או מה-body אם מנהל
     let assignedTeacherId;
         
     if (user.role === 'admin') {
@@ -429,19 +417,15 @@ app.get('/api/posts', isAuthenticated, async (req, res) => {
     try {
         let query = {};
         
-        // תלמיד רואה רק פוסטים שאינם פרטיים וששייכים לכיתותיו
         if (user.role === 'student') {
             query = { 
                 $or: [
-                    { isPrivate: false }, // פוסטים ציבוריים
-                    { classId: { $in: user.classIds } } // פוסטים פרטיים לכיתותיו
+                    { isPrivate: false }, 
+                    { classId: { $in: user.classIds } } 
                 ]
             };
         } 
         
-        // מורה רואה את כל הפוסטים (ציבוריים, פרטיים ושל כיתותיו)
-        // מנהל רואה את כל הפוסטים
-
         const posts = await Post.find(query).sort({ date: -1 });
         res.json(posts);
     } catch (error) {
@@ -455,7 +439,6 @@ app.post('/api/posts', isAuthenticated, isAdminOrTeacher, async (req, res) => {
     const { title, content, isPrivate, classId } = req.body;
     const user = req.session.user;
 
-    // מורה יכול לפרסם רק לכיתות שהוא מלמד או פרטי
     if (user.role === 'teacher' && classId && !user.classIds.includes(parseInt(classId))) {
          return res.status(403).json({ message: 'אינך רשאי לפרסם בכיתה זו.' });
     }
@@ -486,10 +469,8 @@ app.get('/api/assignments', isAuthenticated, async (req, res) => {
         let query = {};
         
         if (user.role === 'student') {
-            // תלמיד רואה משימות רק לכיתותיו
             query = { classId: { $in: user.classIds } };
         } else if (user.role === 'teacher') {
-            // מורה רואה משימות שהוא יצר או משימות לכיתותיו
              query = { 
                 $or: [
                     { teacherId: user._id }, 
@@ -517,7 +498,6 @@ app.post('/api/assignments', isAuthenticated, isAdminOrTeacher, async (req, res)
 
     const classIdInt = parseInt(classId);
 
-    // מורה יכול ליצור משימה רק לכיתות שהוא מלמד
     if (user.role === 'teacher' && !user.classIds.includes(classIdInt)) {
          return res.status(403).json({ message: 'אינך רשאי ליצור משימה לכיתה זו.' });
     }
@@ -560,7 +540,6 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('file'), 
             return res.status(404).json({ message: 'המשימה לא נמצאה.' });
         }
         
-        // לוודא שהתלמיד שייך לכיתה הזו
         if (!user.classIds.includes(assignment.classId)) {
             return res.status(403).json({ message: 'אין לך הרשאה להגיש משימה זו.' });
         }
@@ -576,11 +555,9 @@ app.post('/api/assignments/:id/submit', isAuthenticated, upload.single('file'), 
             date: new Date()
         };
 
-        // בדיקה אם התלמיד כבר הגיש, ואם כן - עדכון ההגשה
         const existingIndex = assignment.submissions.findIndex(s => s.studentId.toString() === user._id.toString());
         
         if (existingIndex > -1) {
-            // אם כבר הגיש - מוחקים את הקובץ הקודם ושומרים את החדש
             if (fs.existsSync(path.join(uploadDir, assignment.submissions[existingIndex].file.filename))) {
                  fs.unlinkSync(path.join(uploadDir, assignment.submissions[existingIndex].file.filename));
             }
@@ -617,7 +594,6 @@ app.get('/api/assignments/download/:assignmentId/:studentId', isAuthenticated, i
         const filePath = path.join(uploadDir, submission.file.filename);
         
         if (fs.existsSync(filePath)) {
-            // שליחת הקובץ
             res.download(filePath, `${submission.studentName}-${assignment.title}-${path.extname(submission.file.filename)}`);
         } else {
             res.status(404).json({ message: 'קובץ ההגשה לא נמצא בשרת.' });
