@@ -4,7 +4,8 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const mongoose = require('mongoose'); // נדרש ל-MongoDB
+const mongoose = require('mongoose');
+const MongoStore = require('connect-mongo'); // ⬅️ חדש: ספרייה לשמירת Session ב-MongoDB
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,16 +38,23 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static('public'));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// הגדרות express-session
+// ⚙️ הגדרות express-session המעודכנות: שימוש ב-MongoStore
 app.use(session({
     secret: 'a-very-strong-secret-key-for-school',
     resave: false,
     saveUninitialized: false,
+    // 🔑 הגדרת MongoStore לשמירת ה-Session ב-MongoDB Atlas
+    store: MongoStore.create({
+        mongoUrl: MONGODB_URI, // משתמשים ב-URI שהוגדר למעלה
+        collectionName: 'sessions', // שם הקולקציה לשמירת הסשנים
+        ttl: 14 * 24 * 60 * 60 // 14 ימים (זמן חיים של הסשן, בשניות)
+    }),
     cookie: { 
-        secure: false, 
-        maxAge: 1000 * 60 * 60 * 24 
+        secure: process.env.NODE_ENV === 'production', // true ב-Render, false מקומית
+        maxAge: 1000 * 60 * 60 * 24 // 24 שעות
     }
 }));
+
 
 // --- הגדרת סכמות Mongoose (המבנה של הנתונים) ---
 
