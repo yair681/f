@@ -15,6 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: {
                     'Content-Type': 'application/json'
                 },
+                // 🛑 התיקון הקריטי: מאפשר קבלת ושמירת ה-Session Cookie
+                credentials: 'include', 
                 body: JSON.stringify({ email, password })
             });
 
@@ -23,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (response.ok) {
                 showMessage('ההתחברות הצליחה, מעביר אותך למערכת...', 'success');
                 setTimeout(() => {
+                    // וודא שזה מפנה לדף הראשי שמשתמש ב-app.js
                     window.location.href = '/index.html'; 
                 }, 1500);
             } else {
@@ -37,8 +40,6 @@ document.addEventListener('DOMContentLoaded', () => {
     function showMessage(message, type) {
         messageArea.textContent = message;
         messageArea.className = `message ${type}`;
-        if (type === 'clear') {
-            messageArea.className = '';
-        }
+        if (type === 'clear') messageArea.className = 'message';
     }
 });
